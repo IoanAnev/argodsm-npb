@@ -21,6 +21,7 @@
  *      Júnior Löff <loffjh@gmail.com>
  */
 
+#include "argo.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -55,9 +56,6 @@ static int m2[MAXLEVEL+1];
 static int m3[MAXLEVEL+1];
 static int ir[MAXLEVEL+1];
 static int debug_vec[8];
-static double u[NR];
-static double v[NV];
-static double r[NR];
 #else
 static int (*nx)=(int*)malloc(sizeof(int)*(MAXLEVEL+1));
 static int (*ny)=(int*)malloc(sizeof(int)*(MAXLEVEL+1));
@@ -67,15 +65,26 @@ static int (*m2)=(int*)malloc(sizeof(int)*(MAXLEVEL+1));
 static int (*m3)=(int*)malloc(sizeof(int)*(MAXLEVEL+1));
 static int (*ir)=(int*)malloc(sizeof(int)*(MAXLEVEL+1));
 static int (*debug_vec)=(int*)malloc(sizeof(int)*(8));
-static double (*u)=(double*)malloc(sizeof(double)*(NR));
-static double (*v)=(double*)malloc(sizeof(double)*(NV));
-static double (*r)=(double*)malloc(sizeof(double)*(NR));
 #endif
 static int is1, is2, is3, ie1, ie2, ie3, lt, lb;
+static int workrank, numtasks, nthreads;
 static boolean timeron;
 
+static int *gj1;
+static int *gj2;
+static int *gj3;
+
+static double *u;
+static double *v;
+static double *r;
+static double *gs;
+static double *gten;
+
+static bool *lock_flag;
+static argo::globallock::global_tas_lock *lock;
+
 /* function prototypes */
-static void bubble(double ten[][MM], int j1[][MM], int j2[][MM], int j3[][MM], int m, int ind);
+static void bubble(void* pten, void* pj1, void* pj2, void* pj3, int m, int ind);
 static void comm3(void* pointer_u, int n1, int n2, int n3, int kk);
 static void interp(void* pointer_z, int mm1, int mm2, int mm3, void* pointer_u, int n1, int n2, int n3, int k);
 static void mg3P(double u[], double v[], double r[], double a[4], double c[4], int n1, int n2, int n3, int k);
@@ -89,12 +98,61 @@ static void setup(int* n1, int* n2, int* n3, int k);
 static void showall(void* pointer_z, int n1, int n2, int n3);
 static void zero3(void* pointer_z, int n1, int n2, int n3);
 static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k);
+static void distribute(int& beg, int& end, const int& loop_size, const int& beg_offset, const int& less_equal);
 
 /* mg */
 int main(int argc, char *argv[]){
+  /*
+   * -------------------------------------------------------------------------
+   * initialize argodsm
+   * -------------------------------------------------------------------------
+   */
+  argo::init(10*1024*1024*1024UL);
+
+  /*
+   * -------------------------------------------------------------------------
+   * fetch workrank and number of nodes and number of threads
+   * -------------------------------------------------------------------------
+   */ 
+  workrank = argo::node_id();
+  numtasks = argo::number_of_nodes();
+  
+  #pragma omp parallel
+	{
+		#if defined(_OPENMP)
+		#pragma omp master
+			nthreads = omp_get_num_threads();
+		#endif /* _OPENMP */
+	}
+
+  /*
+   * -------------------------------------------------------------------------
+   * move global arrays allocation here, since this is a collective operation
+   * -------------------------------------------------------------------------
+   */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
-	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
+  if(workrank == 0){
+	  printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
+  }
 #endif
+  u=argo::conew_array<double>(NR);
+  v=argo::conew_array<double>(NV);
+  r=argo::conew_array<double>(NR);
+
+  gj1=argo::conew_array<int>(2*MM);
+  gj2=argo::conew_array<int>(2*MM);
+  gj3=argo::conew_array<int>(2*MM);
+  gten=argo::conew_array<double>(2*MM);
+
+  /*
+   * -------------------------------------------------------------------------
+   * move global arrays allocation here, since this is a collective operation
+   * -------------------------------------------------------------------------
+   */
+  gs=argo::conew_<double>(0.0);
+  lock_flag=argo::conew_<bool>(false);
+  lock=new argo::globallock::global_tas_lock(lock_flag);
+
 	/*
 	 * -------------------------------------------------------------------------
 	 * k is the current level. it is passed down through subroutine args
@@ -120,6 +178,7 @@ int main(int argc, char *argv[]){
 		timer_clear(i);
 	}
 
+  argo::barrier();
 	timer_start(T_INIT);	
 
 	/*
@@ -169,7 +228,9 @@ int main(int argc, char *argv[]){
 		}
 		fclose(fp);
 	}else{
-		printf(" No input file. Using compiled defaults\n");
+    if(workrank == 0){
+		  printf(" No input file. Using compiled defaults\n");
+    }
 		lt = LT_DEFAULT;
 		nit = NIT_DEFAULT;
 		nx[lt] = NX_DEFAULT;
@@ -239,15 +300,19 @@ int main(int argc, char *argv[]){
 
 	setup(&n1,&n2,&n3,k);
 
+  #pragma omp parallel
 	zero3(u,n1,n2,n3);
 
 	zran3(v,n1,n2,n3,nx[lt],ny[lt],k);
 	
+  #pragma omp parallel
 	norm2u3(v,n1,n2,n3,&rnm2,&rnmu,nx[lt],ny[lt],nz[lt]);
 
-	printf("\n\n NAS Parallel Benchmarks 4.1 Parallel C++ version with OpenMP - MG Benchmark\n\n");
-	printf(" Size: %3dx%3dx%3d (class_npb %1c)\n", nx[lt], ny[lt], nz[lt], class_npb);
-	printf(" Iterations: %3d\n", nit);
+  if(workrank == 0){
+    printf("\n\n NAS Parallel Benchmarks 4.1 Parallel C++ version with OpenMP - MG Benchmark\n\n");
+    printf(" Size: %3dx%3dx%3d (class_npb %1c)\n", nx[lt], ny[lt], nz[lt], class_npb);
+    printf(" Iterations: %3d\n", nit);
+  }
 	
 	#pragma omp parallel
 	{
@@ -266,17 +331,23 @@ int main(int argc, char *argv[]){
 	
 	setup(&n1,&n2,&n3,k);
 
+  #pragma omp parallel
 	zero3(u,n1,n2,n3);
 
 	zran3(v,n1,n2,n3,nx[lt],ny[lt],k);
 
+  argo::barrier();
 	timer_stop(T_INIT);
 	tinit = timer_read(T_INIT);
-	printf(" Initialization time: %15.3f seconds\n", tinit);
+  if(workrank == 0){
+	  printf(" Initialization time: %15.3f seconds\n", tinit);
+  }
 
 	for(i=T_BENCH; i<T_LAST; i++){
 		timer_clear(i);
 	}
+
+  argo::barrier();
 	timer_start(T_BENCH);
 
 	#pragma omp parallel firstprivate(nit) private(it)
@@ -299,7 +370,9 @@ int main(int argc, char *argv[]){
 		for(it = 1; it <= nit; it++){
 			if((it==1)||(it==nit)||((it%5)==0)){
 				#pragma omp master
-					printf("  iter %3d\n",it);
+          if(workrank == 0){
+					  printf("  iter %3d\n",it);
+          }
 			}
 			
 			if(timeron){
@@ -329,6 +402,7 @@ int main(int argc, char *argv[]){
 		norm2u3(r,n1,n2,n3,&rnm2,&rnmu,nx[lt],ny[lt],nz[lt]);
 	} /* end parallel */
 
+  argo::barrier();
 	timer_stop(T_BENCH);
 
 	t = timer_read(T_BENCH);    	
@@ -336,43 +410,47 @@ int main(int argc, char *argv[]){
 	verified = FALSE;
 	verify_value = 0.0;	
 
-	printf(" Benchmark completed\n");
+  if(workrank == 0){
+	  printf(" Benchmark completed\n");
+  }
 
-	epsilon = 1.0e-8;
-	if(class_npb != 'U'){
-		if(class_npb == 'S'){
-			verify_value = 0.5307707005734e-04;
-		}else if(class_npb == 'W'){
-			verify_value = 0.6467329375339e-05;
-		}else if(class_npb == 'A'){
-			verify_value = 0.2433365309069e-05;
-		}else if(class_npb == 'B'){
-			verify_value = 0.1800564401355e-05;
-		}else if(class_npb == 'C'){
-			verify_value = 0.5706732285740e-06;
-		}else if(class_npb == 'D'){
-			verify_value = 0.1583275060440e-09;
-		}else if(class_npb == 'E'){
-			verify_value = 0.8157592357404e-10; 
-		}
+  if(workrank == 0){
+    epsilon = 1.0e-8;
+    if(class_npb != 'U'){
+      if(class_npb == 'S'){
+        verify_value = 0.5307707005734e-04;
+      }else if(class_npb == 'W'){
+        verify_value = 0.6467329375339e-05;
+      }else if(class_npb == 'A'){
+        verify_value = 0.2433365309069e-05;
+      }else if(class_npb == 'B'){
+        verify_value = 0.1800564401355e-05;
+      }else if(class_npb == 'C'){
+        verify_value = 0.5706732285740e-06;
+      }else if(class_npb == 'D'){
+        verify_value = 0.1583275060440e-09;
+      }else if(class_npb == 'E'){
+        verify_value = 0.8157592357404e-10; 
+      }
 
-		err = fabs(rnm2-verify_value) / verify_value;
-		if(err <= epsilon){
-			verified = TRUE;
-			printf(" VERIFICATION SUCCESSFUL\n");
-			printf(" L2 Norm is %20.13e\n", rnm2);
-			printf(" Error is   %20.13e\n", err);
-		}else{
-			verified = FALSE;
-			printf(" VERIFICATION FAILED\n");
-			printf(" L2 Norm is             %20.13e\n", rnm2);
-			printf(" The correct L2 Norm is %20.13e\n", verify_value);
-		}
-	}else{
-		verified = FALSE;
-		printf(" Problem size unknown\n");
-		printf(" NO VERIFICATION PERFORMED\n");
-	}
+      err = fabs(rnm2-verify_value) / verify_value;
+      if(err <= epsilon){
+        verified = TRUE;
+        printf(" VERIFICATION SUCCESSFUL\n");
+        printf(" L2 Norm is %20.13e\n", rnm2);
+        printf(" Error is   %20.13e\n", err);
+      }else{
+        verified = FALSE;
+        printf(" VERIFICATION FAILED\n");
+        printf(" L2 Norm is             %20.13e\n", rnm2);
+        printf(" The correct L2 Norm is %20.13e\n", verify_value);
+      }
+    }else{
+      verified = FALSE;
+      printf(" Problem size unknown\n");
+      printf(" NO VERIFICATION PERFORMED\n");
+    }
+  }
 
 	nn = 1.0*nx[lt]*ny[lt]*nz[lt];
 
@@ -382,48 +460,82 @@ int main(int argc, char *argv[]){
 		mflops = 0.0;
 	}
 
-	c_print_results((char*)"MG",
-			class_npb,
-			nx[lt],
-			ny[lt],
-			nz[lt],
-			nit,
-			t,
-			mflops,
-			(char*)"          floating point",
-			verified,
-			(char*)NPBVERSION,
-			(char*)COMPILETIME,
-			(char*)COMPILERVERSION,
-			(char*)LIBVERSION,
-			std::getenv("OMP_NUM_THREADS"),
-			(char*)CS1,
-			(char*)CS2,
-			(char*)CS3,
-			(char*)CS4,
-			(char*)CS5,
-			(char*)CS6,
-			(char*)CS7);
+  if(workrank == 0){
+    c_print_results((char*)"MG",
+        class_npb,
+        nx[lt],
+        ny[lt],
+        nz[lt],
+        nit,
+        t,
+        mflops,
+        (char*)"          floating point",
+        verified,
+        (char*)NPBVERSION,
+        (char*)COMPILETIME,
+        (char*)COMPILERVERSION,
+        (char*)LIBVERSION,
+        std::getenv("OMP_NUM_THREADS"),
+        (char*)CS1,
+        (char*)CS2,
+        (char*)CS3,
+        (char*)CS4,
+        (char*)CS5,
+        (char*)CS6,
+        (char*)CS7);
+  }
 
 	/*
 	 * ---------------------------------------------------------------------
 	 * more timers
 	 * ---------------------------------------------------------------------
 	 */
-	if(timeron){
-		tmax = timer_read(T_BENCH);
-		if(tmax==0.0){tmax=1.0;}
-		printf("  SECTION   Time (secs)\n");
-		for(i=T_BENCH; i<T_LAST; i++){
-			t = timer_read(i);
-			if(i==T_RESID2){
-				t = timer_read(T_RESID) - t;
-				printf("    --> %8s:%9.3f  (%6.2f%%)\n", "mg-resid", t, t*100.0/tmax);
-			}else{
-				printf("  %-8s:%9.3f  (%6.2f%%)\n", t_names[i], t, t*100.0/tmax);
-			}
-		}
-	}
+  if(workrank == 0){
+    if(timeron){
+      tmax = timer_read(T_BENCH);
+      if(tmax==0.0){tmax=1.0;}
+      printf("  SECTION   Time (secs)\n");
+      for(i=T_BENCH; i<T_LAST; i++){
+        t = timer_read(i);
+        if(i==T_RESID2){
+          t = timer_read(T_RESID) - t;
+          printf("    --> %8s:%9.3f  (%6.2f%%)\n", "mg-resid", t, t*100.0/tmax);
+        }else{
+          printf("  %-8s:%9.3f  (%6.2f%%)\n", t_names[i], t, t*100.0/tmax);
+        }
+      }
+    }
+  }
+
+  /*
+   * -------------------------------------------------------------------------
+   * deallocate data structures
+   * -------------------------------------------------------------------------
+   */
+  argo::codelete_array(u);
+  argo::codelete_array(v);
+  argo::codelete_array(r);
+
+  argo::codelete_array(gj1);
+  argo::codelete_array(gj2);
+  argo::codelete_array(gj3);
+  argo::codelete_array(gten);
+
+  /*
+   * -------------------------------------------------------------------------
+   * deallocate data structures
+   * -------------------------------------------------------------------------
+   */
+  delete lock;
+  argo::codelete_(gs);
+  argo::codelete_(lock_flag);
+
+  /*
+   * -------------------------------------------------------------------------
+   * finalize argodsm
+   * -------------------------------------------------------------------------
+   */
+  argo::finalize();
 
 	return 0;
 }
@@ -433,7 +545,12 @@ int main(int argc, char *argv[]){
  * bubble does a bubble sort in direction dir
  * ---------------------------------------------------------------------
  */
-static void bubble(double ten[][MM], int j1[][MM], int j2[][MM], int j3[][MM], int m, int ind){
+static void bubble(void* pten, void* pj1, void* pj2, void* pj3, int m, int ind){
+  double (*ten)[MM] = (double (*)[MM])pten;
+  int (*j1)[MM] = (int (*)[MM])pj1;
+  int (*j2)[MM] = (int (*)[MM])pj2;
+  int (*j3)[MM] = (int (*)[MM])pj3;
+
 	double temp;
 	int i, j_temp;
 
@@ -492,13 +609,17 @@ static void bubble(double ten[][MM], int j1[][MM], int j2[][MM], int j3[][MM], i
 static void comm3(void* pointer_u, int n1, int n2, int n3, int kk){
 	double (*u)[n2][n1] = (double (*)[n2][n1])pointer_u;
 
+  int beg, end;
 	int i1, i2, i3;
 	if(timeron){
 		#pragma omp master
 			timer_start(T_COMM3);
 	}
+
+  distribute(beg, end, n3-1, 0, 0);
+
 	#pragma omp for
-	for(i3 = 1; i3 < n3-1; i3++){
+	for(i3 = beg; i3 < end; i3++){
 		/* axis = 1 */
 		for(i2 = 1; i2 < n2-1; i2++){
 			u[i3][i2][0] = u[i3][i2][n1-2];
@@ -510,14 +631,19 @@ static void comm3(void* pointer_u, int n1, int n2, int n3, int kk){
 			u[i3][n2-1][i1] = u[i3][1][i1];			
 		}
 	}
+  argo::barrier(nthreads);
+
+  distribute(beg, end, n2, 0, 0);
+
 	/* axis = 3 */
 	#pragma omp for
-	for(i2 = 0; i2 < n2; i2++){
+	for(i2 = beg; i2 < end; i2++){
 		for(i1 = 0; i1 < n1; i1++){
 			u[0][i2][i1] = u[n3-2][i2][i1];
 			u[n3-1][i2][i1] = u[1][i2][i1];			
 		}
 	}
+  argo::barrier(nthreads);
 
 	if(timeron){
 		#pragma omp master
@@ -542,6 +668,7 @@ static void interp(void* pointer_z, int mm1, int mm2, int mm3, void* pointer_u, 
 	double (*u)[n2][n1] = (double (*)[n2][n1])pointer_u;	
 
 	int i3, i2, i1, d1, d2, d3, t1, t2, t3;
+  int beg, end;
 
 	/* 
 	 * --------------------------------------------------------------------
@@ -559,8 +686,10 @@ static void interp(void* pointer_z, int mm1, int mm2, int mm3, void* pointer_u, 
 	}
 
 	if(n1 != 3 && n2 != 3 && n3 != 3){
+    distribute(beg, end, mm3-1, 0, 0);
+
 		#pragma omp for
-		for(i3 = 0; i3 < mm3-1; i3++){
+		for(i3 = beg; i3 < end; i3++){
 			for(i2 = 0; i2 < mm2-1; i2++){
 				for(i1 = 0; i1 < mm1; i1++){
 					z1[i1] = z[i3][i2+1][i1] + z[i3][i2][i1];
@@ -615,8 +744,11 @@ static void interp(void* pointer_z, int mm1, int mm2, int mm3, void* pointer_u, 
 			d3 = 1;
 			t3 = 0;
 		}
+
+    distribute(beg, end, mm3-1, d3, 1);
+
 		#pragma omp for
-		for(i3 = d3; i3 <= mm3-1; i3++){
+		for(i3 = beg; i3 <= end; i3++){
 			for(i2 = d2; i2 <= mm2-1; i2++){
 				for(i1 = d1; i1 <= mm1-1; i1++){
 					u[2*i3-d3-1][2*i2-d2-1][2*i1-d1-1] =
@@ -643,8 +775,11 @@ static void interp(void* pointer_z, int mm1, int mm2, int mm3, void* pointer_u, 
 				}
 			}
 		}
+
+    distribute(beg, end, mm3-1, 1, 1);
+
 		#pragma omp for
-		for(i3 = 1; i3 <= mm3-1; i3++){
+		for(i3 = beg; i3 <= end; i3++){
 			for(i2 = d2; i2 <= mm2-1; i2++){
 				for(i1 = d1; i1 <= mm1-1; i1++){
 					u[2*i3-t3-1][2*i2-d2-1][2*i1-d1-1] =
@@ -676,6 +811,7 @@ static void interp(void* pointer_z, int mm1, int mm2, int mm3, void* pointer_u, 
 			}
 		}
 	}
+  argo::barrier(nthreads);
 	if(timeron){
 		#pragma omp master
 			timer_stop(T_INTERP);
@@ -766,6 +902,7 @@ static void norm2u3(void* pointer_r, int n1, int n2, int n3, double* rnm2, doubl
 	static double s, rnmu_local;
 	double a;
 	int i3, i2, i1;
+  int beg, end;
 
 	double dn;
 
@@ -781,8 +918,10 @@ static void norm2u3(void* pointer_r, int n1, int n2, int n3, double* rnm2, doubl
 		rnmu_local = 0.0;
 	}
 
+  distribute(beg, end, n3-1, 1, 0);
+
 	#pragma omp for reduction(+:s,rnmu_local) 
-	for(i3 = 1; i3 < n3-1; i3++){
+	for(i3 = beg; i3 < end; i3++){
 		for(i2 = 1; i2 < n2-1; i2++){
 			for(i1 = 1; i1 < n1-1; i1++){
 				s = s + r[i3][i2][i1] * r[i3][i2][i1];
@@ -791,6 +930,22 @@ static void norm2u3(void* pointer_r, int n1, int n2, int n3, double* rnm2, doubl
 			}
 		}
 	}
+
+  #pragma omp master
+  {
+    lock->lock();
+    *gs += s;
+    lock->unlock();
+  }
+  argo::barrier(nthreads);
+
+  #pragma omp single
+  {
+    s = *gs;
+    if(workrank == 0){
+      *gs = 0.0;
+    }
+  }
 
 	*rnmu = rnmu_local;
 	*rnm2 = sqrt(s/dn);
@@ -843,15 +998,18 @@ static void psinv(void* pointer_r, void* pointer_u, int n1, int n2, int n3, doub
 	double (*u)[n2][n1] = (double (*)[n2][n1])pointer_u;	
 
 	int i3, i2, i1;
+  int beg, end;
 	double r1[M], r2[M];
 
 	if(timeron){
 		#pragma omp master
 			timer_start(T_PSINV);
 	}
+
+  distribute(beg, end, n3-1, 1, 0);
 	
 	#pragma omp for
-	for(i3 = 1; i3 < n3-1; i3++){
+	for(i3 = beg; i3 < end; i3++){
 		for(i2 = 1; i2 < n2-1; i2++){
 			for(i1 = 0; i1 < n1; i1++){
 				r1[i1] = r[i3][i2-1][i1] + r[i3][i2+1][i1]
@@ -930,14 +1088,18 @@ static void resid(void* pointer_u, void* pointer_v, void* pointer_r, int n1, int
 	double (*r)[n2][n1] = (double (*)[n2][n1])pointer_r;	
 
 	int i3, i2, i1;
+  int beg, end;
 	double u1[M], u2[M];
 
 	if(timeron){
 		#pragma omp master
 			timer_start(T_RESID);
 	}
+
+  distribute(beg, end, n3-1, 1, 0);
+
 	#pragma omp for
-	for(i3 = 1; i3 < n3-1; i3++){
+	for(i3 = beg; i3 < end; i3++){
 		for(i2 = 1; i2 < n2-1; i2++){
 			for(i1 = 0; i1 < n1; i1++){
 				u1[i1] = u[i3][i2-1][i1] + u[i3][i2+1][i1]
@@ -1000,6 +1162,7 @@ static void rprj3(void* pointer_r, int m1k, int m2k, int m3k, void* pointer_s, i
 	double (*s)[m2j][m1j] = (double (*)[m2j][m1j])pointer_s;	
 
 	int j3, j2, j1, i3, i2, i1, d1, d2, d3, j;
+  int beg, end;
 
 	double x1[M], y1[M], x2, y2;
 
@@ -1023,8 +1186,10 @@ static void rprj3(void* pointer_r, int m1k, int m2k, int m3k, void* pointer_s, i
 		d3 = 1;
 	}
 
+  distribute(beg, end, m3j-1, 1, 0);
+
 	#pragma omp for
-	for(j3 = 1; j3 < m3j-1; j3++){
+	for(j3 = beg; j3 < end; j3++){
 		i3 = 2*j3-d3;		
 		for(j2 = 1; j2 < m2j-1; j2++){
 			i2 = 2*j2-d2;
@@ -1149,15 +1314,20 @@ static void zero3(void* pointer_z, int n1, int n2, int n3){
 	double (*z)[n2][n1] = (double (*)[n2][n1])pointer_z;
 
 	int i1, i2, i3;
+  int beg, end;
 
-    #pragma omp for  
-	for(i3 = 0;i3 < n3; i3++){
+  distribute(beg, end, n3, 0, 0);
+
+  #pragma omp for  
+	for(i3 = beg;i3 < end; i3++){
 		for(i2 = 0; i2 < n2; i2++){
 			for(i1 = 0; i1 < n1; i1++){
 				z[i3][i2][i1] = 0.0;
 			}
 		}
 	}
+
+  argo::barrier(nthreads);
 }
 
 /*
@@ -1171,6 +1341,7 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	double (*z)[n2][n1] = (double (*)[n2][n1])pointer_z;
 
 	int i0, m0, m1;
+  int beg, end;
 
 	int i1, i2, i3, d1, e1, e2, e3;
 	double xx, x0, x1, a1, a2, ai;
@@ -1194,15 +1365,17 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	e3 = ie3 - is3 + 2;
 	x0 = X;
 	randlc(&x0, ai);
-	for(i3 = 1; i3 < e3; i3++){
-		x1 = x0;
-		for(i2 = 1; i2 < e2; i2++){
-			xx = x1;
-			vranlc(d1, &xx, A, &(z[i3][i2][1]));
-			randlc(&x1,a1);
-		}
-		randlc(&x0, a2);
-	}
+  if(workrank == 0){
+    for(i3 = 1; i3 < e3; i3++){
+      x1 = x0;
+      for(i2 = 1; i2 < e2; i2++){
+        xx = x1;
+        vranlc(d1, &xx, A, &(z[i3][i2][1]));
+        randlc(&x1,a1);
+      }
+      randlc(&x0, a2);
+    }
+  }
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -1210,6 +1383,16 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	 * ---------------------------------------------------------------------
 	 */	
 	for(i = 0; i < MM; i++){
+    if(workrank == 0){
+      gten[1*MM + i] = 0.0;
+      gj1[1*MM + i] = 0;
+      gj2[1*MM + i] = 0;
+      gj3[1*MM + i] = 0;
+      gten[0*MM + i] = 1.0;
+      gj1[0*MM + i] = 0;
+      gj2[0*MM + i] = 0;
+      gj3[0*MM + i] = 0;
+    }
 		ten[1][i] = 0.0;
 		j1[1][i] = 0;
 		j2[1][i] = 0;
@@ -1219,26 +1402,68 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 		j2[0][i] = 0;
 		j3[0][i] = 0;
 	}
-	for(i3 = 1; i3 < n3-1; i3++){
+  argo::barrier();
+
+  distribute(beg, end, n3-1, 1, 0);
+
+  #pragma omp parallel for private(i1, i2, i3)
+	for(i3 = beg; i3 < end; i3++){
 		for(i2 = 1; i2 < n2-1; i2++){
 			for(i1 = 1; i1 < n1-1; i1++){
 				if(z[i3][i2][i1] > ten[1][0]){
-					ten[1][0] = z[i3][i2][i1];
-					j1[1][0] = i1;
-					j2[1][0] = i2;
-					j3[1][0] = i3;
-					bubble(ten, j1, j2, j3, MM, 1);
+          #pragma omp critical
+          {
+            ten[1][0] = z[i3][i2][i1];
+            j1[1][0] = i1;
+            j2[1][0] = i2;
+            j3[1][0] = i3;
+            bubble(ten, j1, j2, j3, MM, 1);
+          }
 				}
 				if(z[i3][i2][i1] < ten[0][0]){
-					ten[0][0] = z[i3][i2][i1];
-					j1[0][0] = i1;
-					j2[0][0] = i2;
-					j3[0][0] = i3;
-					bubble(ten, j1, j2, j3, MM, 0);
+          #pragma omp critical
+          {
+            ten[0][0] = z[i3][i2][i1];
+            j1[0][0] = i1;
+            j2[0][0] = i2;
+            j3[0][0] = i3;
+            bubble(ten, j1, j2, j3, MM, 0);
+          }
 				}
 			}
 		}
 	}
+
+  lock->lock();
+  for(i3 = 0; i3 < MM; i3++){
+    if(ten[1][i3] > gten[1*MM + 0]){
+      gten[1*MM + 0] = ten[1][i3];
+      gj1[1*MM + 0] = j1[1][i3];
+      gj2[1*MM + 0] = j2[1][i3];
+      gj3[1*MM + 0] = j3[1][i3];
+      bubble(gten, gj1, gj2, gj3, MM, 1);
+    }
+    if(ten[0][i3] < gten[0*MM + 0]){
+      gten[0*MM + 0] = ten[0][i3];
+      gj1[0*MM + 0] = j1[0][i3];
+      gj2[0*MM + 0] = j2[0][i3];
+      gj3[0*MM + 0] = j3[0][i3];
+      bubble(gten, gj1, gj2, gj3, MM, 0);
+    }
+  }
+  lock->unlock();
+  argo::barrier();
+
+  for(i3 = 0; i3 < MM; i3++){
+    ten[1][i3] = gten[1*MM + i3];
+    j1[1][i3] = gj1[1*MM + i3];
+    j2[1][i3] = gj2[1*MM + i3];
+    j3[1][i3] = gj3[1*MM + i3];
+    ten[0][i3] = gten[0*MM + i3];
+    j1[0][i3] = gj1[0*MM + i3];
+    j2[0][i3] = gj2[0*MM + i3];
+    j3[0][i3] = gj3[0*MM + i3];
+  }
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -1278,19 +1503,37 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	m1 = 0;
 	m0 = 0;
 
-	for(i3 = 0; i3 < n3; i3++){
+  distribute(beg, end, n3, 0, 0);
+
+  #pragma omp parallel for private(i1, i2, i3)
+	for(i3 = beg; i3 < end; i3++){
 		for(i2 = 0; i2 < n2; i2++){
 			for(i1 = 0; i1 < n1; i1++){
 				z[i3][i2][i1] = 0.0;
 			}
 		}
 	}
-	for (i = MM-1; i >= m0; i--){
-		z[jg[0][i][3]][jg[0][i][2]][jg[0][i][1]] = -1.0;
-	}
-	for(i = MM-1; i >= m1; i--){
-		z[jg[1][i][3]][jg[1][i][2]][jg[1][i][1]] = +1.0;
-	}
+  argo::barrier();
+
+  if(workrank == 0){
+    #pragma omp parallel for private(i)
+    for (i = MM-1; i >= m0; i--){
+      z[jg[0][i][3]][jg[0][i][2]][jg[0][i][1]] = -1.0;
+    }
+    #pragma omp parallel for private(i)
+    for(i = MM-1; i >= m1; i--){
+      z[jg[1][i][3]][jg[1][i][2]][jg[1][i][1]] = +1.0;
+    }
+  }
+  argo::barrier();
+
 	#pragma omp parallel 
 	comm3(z, n1, n2, n3, k);
+}
+
+static void distribute(int& beg, int& end, const int& loop_size,
+                       const int& beg_offset, const int& less_equal){
+  int chunk = loop_size / numtasks;
+  beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
+  end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }

@@ -21,6 +21,7 @@
  *      Júnior Löff <loffjh@gmail.com>
  */
 
+#include "argo.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -70,28 +71,10 @@
 
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
-static double u[ISIZ3][ISIZ2/2*2+1][ISIZ1/2*2+1][5];
-static double rsd[ISIZ3][ISIZ2/2*2+1][ISIZ1/2*2+1][5];
-static double frct[ISIZ3][ISIZ2/2*2+1][ISIZ1/2*2+1][5];
 static double flux[ISIZ1][5];
-static double qs[ISIZ3][ISIZ2/2*2+1][ISIZ1/2*2+1];
-static double rho_i[ISIZ3][ISIZ2/2*2+1][ISIZ1/2*2+1];
-static double a[ISIZ2][ISIZ1/2*2+1][5][5];
-static double b[ISIZ2][ISIZ1/2*2+1][5][5];
-static double c[ISIZ2][ISIZ1/2*2+1][5][5];
-static double d[ISIZ2][ISIZ1/2*2+1][5][5];
 static double ce[13][5];
 #else
-static double (*u)[ISIZ2/2*2+1][ISIZ1/2*2+1][5]=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1][5])malloc(sizeof(double)*((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)*(5)));
-static double (*rsd)[ISIZ2/2*2+1][ISIZ1/2*2+1][5]=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1][5])malloc(sizeof(double)*((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)*(5)));
-static double (*frct)[ISIZ2/2*2+1][ISIZ1/2*2+1][5]=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1][5])malloc(sizeof(double)*((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)*(5)));
 static double (*flux)[5]=(double(*)[5])malloc(sizeof(double)*((ISIZ1)*(5)));
-static double (*qs)[ISIZ2/2*2+1][ISIZ1/2*2+1]=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1])malloc(sizeof(double)*((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)));
-static double (*rho_i)[ISIZ2/2*2+1][ISIZ1/2*2+1]=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1])malloc(sizeof(double)*((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)));
-static double (*a)[ISIZ1/2*2+1][5][5]=(double(*)[ISIZ1/2*2+1][5][5])malloc(sizeof(double)*((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5)));
-static double (*b)[ISIZ1/2*2+1][5][5]=(double(*)[ISIZ1/2*2+1][5][5])malloc(sizeof(double)*((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5)));
-static double (*c)[ISIZ1/2*2+1][5][5]=(double(*)[ISIZ1/2*2+1][5][5])malloc(sizeof(double)*((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5)));
-static double (*d)[ISIZ1/2*2+1][5][5]=(double(*)[ISIZ1/2*2+1][5][5])malloc(sizeof(double)*((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5)));
 static double (*ce)[5]=(double(*)[5])malloc(sizeof(double)*((13)*(5)));
 #endif
 /* grid */
@@ -119,6 +102,29 @@ static int itmax, invert;
 /* timer */
 static double maxtime;
 static boolean timeron;
+/* argodsm */
+static int workrank, numtasks, nthreads;
+
+static double (*u)[ISIZ2/2*2+1][ISIZ1/2*2+1][5];
+static double (*rsd)[ISIZ2/2*2+1][ISIZ1/2*2+1][5];
+static double (*frct)[ISIZ2/2*2+1][ISIZ1/2*2+1][5];
+
+static double (*qs)[ISIZ2/2*2+1][ISIZ1/2*2+1];
+static double (*rho_i)[ISIZ2/2*2+1][ISIZ1/2*2+1];
+
+static double (*a)[ISIZ1/2*2+1][5][5];
+static double (*b)[ISIZ1/2*2+1][5][5];
+static double (*c)[ISIZ1/2*2+1][5][5];
+static double (*d)[ISIZ1/2*2+1][5][5];
+
+static double *gtv;
+static double *gsum;
+
+static bool *gflag;
+static bool *gflag2;
+
+static bool *lock_flag;
+static argo::globallock::global_tas_lock *lock;
 
 /* function prototypes */
 void blts(int nx,
@@ -184,15 +190,77 @@ void verify(double xcr[],
 		double xci,
 		char* class_npb,
 		boolean* verified);
+void distribute(int& beg,
+		int& end,
+		const int& loop_size,
+		const int& beg_offset,
+		const int& less_equal);
 
 static boolean flag[ISIZ1/2*2+1];
 static boolean flag2[ISIZ1/2*2+1];
 
 /* lu */
 int main(int argc, char* argv[]){
+	/*
+	 * -------------------------------------------------------------------------
+	 * initialize argodsm
+	 * -------------------------------------------------------------------------
+	 */
+	argo::init(10*1024*1024*1024UL);
+	/*
+	 * -------------------------------------------------------------------------
+	 * fetch workrank, number of nodes, and number of threads
+	 * -------------------------------------------------------------------------
+	 */ 
+	workrank = argo::node_id();
+	numtasks = argo::number_of_nodes();
+
+	#pragma omp parallel
+	{
+		#if defined(_OPENMP)
+			#pragma omp master
+			nthreads = omp_get_num_threads();
+		#endif /* _OPENMP */
+	}
+	/*
+	 * -------------------------------------------------------------------------
+	 * move global arrays allocation here, since this is a collective operation
+	 * -------------------------------------------------------------------------
+	 */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
-	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
+	if(workrank == 0){
+		printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
+	}
 #endif
+	u=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1][5])argo::conew_array<double>((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)*(5));
+	rsd=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1][5])argo::conew_array<double>((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)*(5));
+	frct=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1][5])argo::conew_array<double>((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1)*(5));
+
+	qs=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1])argo::conew_array<double>((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1));
+	rho_i=(double(*)[ISIZ2/2*2+1][ISIZ1/2*2+1])argo::conew_array<double>((ISIZ3)*(ISIZ2/2*2+1)*(ISIZ1/2*2+1));
+
+	a=(double(*)[ISIZ1/2*2+1][5][5])argo::conew_array<double>((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5));
+	b=(double(*)[ISIZ1/2*2+1][5][5])argo::conew_array<double>((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5));
+	c=(double(*)[ISIZ1/2*2+1][5][5])argo::conew_array<double>((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5));
+	d=(double(*)[ISIZ1/2*2+1][5][5])argo::conew_array<double>((ISIZ2)*(ISIZ1/2*2+1)*(5)*(5));
+	/*
+	 * -------------------------------------------------------------------------
+	 * move global arrays allocation here, since this is a collective operation
+	 * -------------------------------------------------------------------------
+	 */
+	gsum=argo::conew_array<double>(5);
+	gtv=argo::conew_array<double>(ISIZ2*(ISIZ1/2*2+1)*5);
+	
+	gflag=argo::conew_array<bool>(numtasks);
+	gflag2=argo::conew_array<bool>(numtasks);
+
+	lock_flag=argo::conew_<bool>(false);
+	lock=new argo::globallock::global_tas_lock(lock_flag);
+	/*
+	 * -------------------------------------------------------------------------
+	 * continue with the local allocations
+	 * -------------------------------------------------------------------------
+	 */
 	char class_npb;
 	boolean verified;
 	double mflops;
@@ -248,19 +316,19 @@ int main(int argc, char* argv[]){
 		 * set the boundary values for dependent variables
 		 * ---------------------------------------------------------------------
 		 */
-		setbv(); // "u" is touched..
+		setbv();
 		/*
 		 * ---------------------------------------------------------------------
 		 * set the initial values for dependent variables
 		 * ---------------------------------------------------------------------
 		 */
-		setiv(); // "u" is touched..
+		setiv();
 		/*
 		 * ---------------------------------------------------------------------
 		 * compute the forcing term based on prescribed exact solution
 		 * ---------------------------------------------------------------------
 		 */
-		erhs(); // "frct" and "rsd" are touched..
+		erhs();
 	} /* end parallel */
 
 	/*
@@ -268,7 +336,7 @@ int main(int argc, char* argv[]){
 	 * perform one SSOR iteration to touch all pages
 	 * ---------------------------------------------------------------------
 	 */
-	ssor(1); // "a", "b", "c", "d", and "rsd" are touched..
+	ssor(1);
 	#pragma omp parallel
 	{
 		/*
@@ -304,35 +372,37 @@ int main(int argc, char* argv[]){
 	 * ---------------------------------------------------------------------
 	 */
 	verify(rsdnm,errnm,frc,&class_npb,&verified);
-	mflops=(double)itmax*(1984.77*(double)nx0
-			*(double)ny0
-			*(double)nz0
-			-10923.3*pow(((double)(nx0+ny0+nz0)/3.0),2.0) 
-			+27770.9*(double)(nx0+ny0+nz0)/3.0
-			-144010.0)
-		/(maxtime*1000000.0);
-	c_print_results((char*)"LU",
-			class_npb,
-			nx0,
-			ny0,
-			nz0,
-			itmax,
-			maxtime,
-			mflops,
-			(char*)"          floating point",
-			verified,
-			(char*)NPBVERSION,
-			(char*)COMPILETIME,
-			(char*)COMPILERVERSION,
-			(char*)LIBVERSION,
-			std::getenv("OMP_NUM_THREADS"),
-			(char*)CS1,
-			(char*)CS2,
-			(char*)CS3,
-			(char*)CS4,
-			(char*)CS5,
-			(char*)CS6,
-			(char*)"(none)");
+  	if(workrank == 0){
+		mflops=(double)itmax*(1984.77*(double)nx0
+				*(double)ny0
+				*(double)nz0
+				-10923.3*pow(((double)(nx0+ny0+nz0)/3.0),2.0) 
+				+27770.9*(double)(nx0+ny0+nz0)/3.0
+				-144010.0)
+			/(maxtime*1000000.0);
+		c_print_results((char*)"LU",
+				class_npb,
+				nx0,
+				ny0,
+				nz0,
+				itmax,
+				maxtime,
+				mflops,
+				(char*)"          floating point",
+				verified,
+				(char*)NPBVERSION,
+				(char*)COMPILETIME,
+				(char*)COMPILERVERSION,
+				(char*)LIBVERSION,
+				std::getenv("OMP_NUM_THREADS"),
+				(char*)CS1,
+				(char*)CS2,
+				(char*)CS3,
+				(char*)CS4,
+				(char*)CS5,
+				(char*)CS6,
+				(char*)"(none)");
+	}
 	/*
 	 * ---------------------------------------------------------------------
 	 * more timers
@@ -355,6 +425,41 @@ int main(int argc, char* argv[]){
 			}
 		}
 	}
+	/*
+	 * -------------------------------------------------------------------------
+	 * deallocate data structures
+	 * -------------------------------------------------------------------------
+	 */
+	argo::codelete_array((double*)u);
+	argo::codelete_array((double*)rsd);
+	argo::codelete_array((double*)frct);
+
+	argo::codelete_array((double*)qs);
+	argo::codelete_array((double*)rho_i);
+
+	argo::codelete_array((double*)a);
+	argo::codelete_array((double*)b);
+	argo::codelete_array((double*)c);
+	argo::codelete_array((double*)d);
+	/*
+	 * -------------------------------------------------------------------------
+	 * deallocate data structures
+	 * -------------------------------------------------------------------------
+	 */
+	delete lock;
+	argo::codelete_(lock_flag);
+		
+	argo::codelete_array(gtv);
+	argo::codelete_array(gsum);
+	argo::codelete_array(gflag);
+	argo::codelete_array(gflag2);
+	/*
+	 * -------------------------------------------------------------------------
+	 * finalize argodsm
+	 * -------------------------------------------------------------------------
+	 */
+	argo::finalize();
+
 	return 0;
 }
 
@@ -388,12 +493,15 @@ void blts(int nx,
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j, m;
 	double tmp, tmp1;
 	double tmat[5][5], tv[5];
 
-	#pragma omp for nowait schedule(static)
-	for(j=jst; j<jend; j++){
+  	distribute(beg, end, jend, jst, 0);
+
+	#pragma omp for schedule(static)
+	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(m=0; m<5; m++){
 				v[k][j][i][m]= v[k][j][i][m]
@@ -406,21 +514,35 @@ void blts(int nx,
 		}
 	}
 
-	#pragma omp for nowait schedule(static)
-	for(j=jst; j<jend; j++){
+	#pragma omp single
+	{
+		if (workrank != 0){
+			while (gflag[workrank-1] == 0){
+				argo::backend::acquire();
+			}
+		}
+		if (workrank != numtasks-1){
+			while (gflag[workrank] == 1){
+				argo::backend::acquire();
+			}
+		}
+	}
 		
-	    if (j != jst) {
-	    	while (flag[j-1] == 0){ 
-		    	#pragma omp flush
-		    		;
-		    }
-	    }
-	    if (j != jend-1) {
-	    	while (flag[j] == 1){ 
-		    	#pragma omp flush
-		    		;
-		    }
-	    }
+	#pragma omp for schedule(static)
+	for(j=beg; j<end; j++){
+
+		if (j != beg){
+			while (flag[j-1] == 0){ 
+				#pragma omp flush
+					;
+			}
+		}
+		if (j != end-1){
+			while (flag[j] == 1){ 
+				#pragma omp flush
+					;
+			}
+		}
 
 		for(i=ist; i<iend; i++){
 			for(m=0; m<5; m++){
@@ -540,8 +662,16 @@ void blts(int nx,
 			v[k][j][i][0]=tv[0]/tmat[0][0];
 		}
 
-		if (j != jend-1) flag[j] = 1; 
-		if (j != jst) flag[j-1] = 0;
+		if (j != end-1) flag[j] = 1; 
+		if (j != beg) flag[j-1] = 0;
+		argo::backend::release();
+	}
+
+	#pragma omp single
+	{
+		if (workrank != numtasks-1) gflag[workrank] = 1;
+		if (workrank != 0) gflag[workrank-1] = 0;
+		argo::backend::release();
 	}
 }
 
@@ -577,12 +707,15 @@ void buts(int nx,
 	 * ---------------------------------------------------------------------
 	 */
 	double (*tv)[ISIZ1/2*2+1][5] = (double(*)[ISIZ1/2*2+1][5])pointer_tv;
+	int beg, end;
 	int i, j, m;
 	double tmp, tmp1;
 	double tmat[5][5];
 
-	#pragma omp for nowait schedule(static)
-	for(j=jend-1; j>=jst; j--){
+  	distribute(beg, end, jend-1, jst, 1);
+
+	#pragma omp for schedule(static)
+	for(j=end; j>=beg; j--){
 		for(i=iend-1; i>=ist; i--){
 			for(m=0; m<5; m++){
 				tv[j][i][m]= 
@@ -595,22 +728,35 @@ void buts(int nx,
 		}
 	}
 
-	#pragma omp for nowait schedule(static)
-	for(j=jend-1; j>=jst; j--){
-		
-		
-	    if (j != jend-1) {
-	    	while (flag2[j+1] == 0) {
-		    	#pragma omp flush
-		    		;
-	    	}
-	    }
-	    if (j != jst) {
-	    	while (flag2[j] == 1){
-		    	#pragma omp flush
-		    		;
+	#pragma omp single
+	{
+		if (workrank != numtasks-1){
+			while (gflag2[workrank+1] == 0){
+				argo::backend::acquire();
 			}
-	    }
+		}
+		if (workrank != 0){
+			while (gflag2[workrank] == 1){
+				argo::backend::acquire();
+			}
+		}
+	}
+
+	#pragma omp for schedule(static)
+	for(j=end; j>=beg; j--){
+		
+    		if (j != end){
+      			while (flag2[j+1] == 0) {
+        			#pragma omp flush
+          				;
+      			}
+    		}
+    		if (j != beg){
+      			while (flag2[j] == 1){
+        			#pragma omp flush
+          				;
+      			}
+    		}
 
 		for(i=iend-1; i>=ist; i--){
 			for(m=0; m<5; m++){
@@ -732,9 +878,16 @@ void buts(int nx,
 			v[k][j][i][4]=v[k][j][i][4]-tv[j][i][4];
 		}
 
-		
-		if (j != jend-1) flag2[j+1] = 0;
-		if (j != jst) flag2[j] = 1; 
+		if (j != end) flag2[j+1] = 0;
+		if (j != beg) flag2[j] = 1; 
+		argo::backend::release();
+	}
+
+	#pragma omp single
+	{
+		if (workrank != numtasks-1) gflag2[workrank+1] = 0;
+		if (workrank != 0) gflag2[workrank] = 1;
+		argo::backend::release();
 	}
 }
 
@@ -795,6 +948,7 @@ void erhs(){
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j, k, m;
 	double xi, eta, zeta;
 	double q;
@@ -808,9 +962,11 @@ void erhs(){
 	double u21km1, u31km1, u41km1, u51km1;
 	double flux[ISIZ1][5];
 
+  	distribute(beg, end, ny, 0, 0);
+
 	#pragma omp for
 	for(k=0; k<nz; k++){
-		for(j=0; j<ny; j++){
+		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
 					frct[k][j][i][m]=0.0;
@@ -822,7 +978,7 @@ void erhs(){
 	#pragma omp for
 	for(k=0; k<nz; k++){
 		zeta=((double)k)/(nz-1);
-		for(j=0; j<ny; j++){
+		for(j=beg; j<end; j++){
 			eta=((double)j)/(ny0-1 );
 			for(i=0; i<nx; i++){
 				xi=((double)i)/(nx0-1);
@@ -844,14 +1000,17 @@ void erhs(){
 			}
 		}
 	}
+  	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * xi-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, jend, jst, 0);
+
 	#pragma omp for
 	for(k=1; k<nz-1; k++){
-		for(j=jst; j<jend; j++){
+		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=rsd[k][j][i][1];
 				u21=rsd[k][j][i][1]/rsd[k][j][i][0];
@@ -956,13 +1115,16 @@ void erhs(){
 			}
 		}
 	}
+  	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * eta-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, nz-1, 1, 0);
+
 	#pragma omp for
-	for(k=1; k<nz-1; k++){
+	for(k=beg; k<end; k++){
 		for(i=ist; i<iend; i++){
 			for(j=0; j<ny; j++){
 				flux[j][0]=rsd[k][j][i][2];
@@ -1068,13 +1230,16 @@ void erhs(){
 			}
 		}
 	}
+  	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * zeta-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, jend, jst, 0);
+  
 	#pragma omp for
-	for(j=jst; j<jend; j++){
+	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(k=0; k<nz; k++){
 				flux[k][0]=rsd[k][j][i][3];
@@ -1188,29 +1353,31 @@ void erhs(){
  * ---------------------------------------------------------------------
  */
 void error(){
-	/*
-	 * ---------------------------------------------------------------------
-	 * local variables
-	 * ---------------------------------------------------------------------
-	 */
-	int i, j, k, m;
-	double tmp;
-	double u000ijk[5];
-	for(m=0;m<5;m++){errnm[m]=0.0;}
-	for(k=1; k<nz-1; k++){
-		for(j=jst; j<jend; j++){
-			for(i=ist; i<iend; i++){
-				exact(i, j, k, u000ijk);
-				for(m=0; m<5; m++){
-					tmp=(u000ijk[m]-u[k][j][i][m]);
-					errnm[m]=errnm[m]+tmp*tmp;
+	if(workrank == 0){
+		/*
+		* ---------------------------------------------------------------------
+		* local variables
+		* ---------------------------------------------------------------------
+		*/
+		int i, j, k, m;
+		double tmp;
+		double u000ijk[5];
+		for(m=0;m<5;m++){errnm[m]=0.0;}
+		for(k=1; k<nz-1; k++){
+			for(j=jst; j<jend; j++){
+				for(i=ist; i<iend; i++){
+					exact(i, j, k, u000ijk);
+					for(m=0; m<5; m++){
+						tmp=(u000ijk[m]-u[k][j][i][m]);
+						errnm[m]=errnm[m]+tmp*tmp;
+					}
 				}
 			}
 		}
-	}
-	for(m=0; m<5; m++){
-		errnm[m]=sqrt(errnm[m]/((nx0-2)*(ny0-2)*(nz0-2)));
-	}
+		for(m=0; m<5; m++){
+			errnm[m]=sqrt(errnm[m]/((nx0-2)*(ny0-2)*(nz0-2)));
+		}
+  	}
 }
 
 /*
@@ -1257,6 +1424,7 @@ void jacld(int k){
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j;
 	double r43;
 	double c1345;
@@ -1266,8 +1434,10 @@ void jacld(int k){
 	c1345=C1*C3*C4*C5;
 	c34=C3*C4;
 
-	#pragma omp for nowait schedule(static)
-	for(j=jst; j<jend; j++){
+  	distribute(beg, end, jend, jst, 0);
+
+	#pragma omp for schedule(static)
+	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			/*
 			 * ---------------------------------------------------------------------
@@ -1533,6 +1703,8 @@ void jacld(int k){
 				-dt*tx1*dx5;
 		}
 	}
+	#pragma omp single
+	argo::backend::acquire();
 }
 
 /*
@@ -1546,6 +1718,7 @@ void jacu(int k){
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j;
 	double r43;
 	double c1345;
@@ -1555,8 +1728,10 @@ void jacu(int k){
 	c1345=C1*C3*C4*C5;
 	c34=C3*C4;
 
-	#pragma omp for nowait schedule(static)
-	for (j=jend-1; j>=jst; j--) {
+  	distribute(beg, end, jend-1, jst, 1);
+
+	#pragma omp for schedule(static)
+	for (j=end; j>=beg; j--) {
 		for (i=iend-1; i>=ist; i--) {
 			/*
 			 * ---------------------------------------------------------------------
@@ -1842,6 +2017,8 @@ void jacu(int k){
 				-dt*tz1*dz5;
 		}
 	}
+	#pragma omp single
+	argo::backend::acquire();
 }
 
 /*
@@ -1866,17 +2043,24 @@ void l2norm(int nx0,
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j, k, m;
 	double sum0=0.0, sum1=0.0, sum2=0.0, sum3=0.0, sum4=0.0;
 
-	#pragma omp single  
-	for (m = 0; m < 5; m++) {
-		sum[m] = 0.0;
-	}
+	#pragma omp single
+  	for(m=0; m<5; m++){
+    		sum[m] = 0.0;
+    		if(workrank == 0){
+      			gsum[m] = 0.0;
+    		}
+  	}
+	argo::barrier(nthreads);
+
+  	distribute(beg, end, jend, jst, 0);
 
 	#pragma omp for nowait
 	for(k=1; k<nz0-1; k++){
-		for(j=jst; j<jend; j++){
+		for(j=beg; j<end; j++){
 			for(i=ist; i<iend; i++){
 				sum0 = sum0 + v[i][j][k][0] * v[i][j][k][0];
 				sum1 = sum1 + v[i][j][k][1] * v[i][j][k][1];
@@ -1897,171 +2081,185 @@ void l2norm(int nx0,
 	}
 	#pragma omp barrier  
 
+  	#pragma omp master
+  	{
+    		lock->lock();
+		gsum[0] += sum[0];
+		gsum[1] += sum[1];
+		gsum[2] += sum[2];
+		gsum[3] += sum[3];
+		gsum[4] += sum[4];
+    		lock->unlock();
+  	}
+  	argo::barrier(nthreads);
+
 	#pragma omp single  
 	for(m=0; m<5; m++){
-		sum[m]=sqrt(sum[m]/((nx0-2)*(ny0-2)*(nz0-2)));
+		sum[m]=sqrt(gsum[m]/((nx0-2)*(ny0-2)*(nz0-2)));
 	}
 }
 
 void pintgr(){
-	/*
-	 * ---------------------------------------------------------------------
-	 * local variables
-	 * ---------------------------------------------------------------------
-	 */
-	int i, j, k;
-	int ibeg, ifin, ifin1;
-	int jbeg, jfin, jfin1;
-	double phi1[ISIZ3+2][ISIZ2+2];
-	double phi2[ISIZ3+2][ISIZ2+2];
-	double frc1, frc2, frc3;
-	/*
-	 * ---------------------------------------------------------------------
-	 * set up the sub-domains for integeration in each processor
-	 * ---------------------------------------------------------------------
-	 */
-	ibeg=ii1;
-	ifin=ii2;
-	jbeg=ji1;
-	jfin=ji2;
-	ifin1=ifin-1;
-	jfin1=jfin-1;
-	/*
-	 * ---------------------------------------------------------------------
-	 * initialize
-	 * ---------------------------------------------------------------------
-	 */
-	for(i=0; i<=ISIZ2+1; i++){
-		for(k=0; k<=ISIZ3+1; k++){		
-			phi1[k][i]=0.0;
-			phi2[k][i]=0.0;
+  	if(workrank == 0){
+		/*
+		* ---------------------------------------------------------------------
+		* local variables
+		* ---------------------------------------------------------------------
+		*/
+		int i, j, k;
+		int ibeg, ifin, ifin1;
+		int jbeg, jfin, jfin1;
+		double phi1[ISIZ3+2][ISIZ2+2];
+		double phi2[ISIZ3+2][ISIZ2+2];
+		double frc1, frc2, frc3;
+		/*
+		* ---------------------------------------------------------------------
+		* set up the sub-domains for integeration in each processor
+		* ---------------------------------------------------------------------
+		*/
+		ibeg=ii1;
+		ifin=ii2;
+		jbeg=ji1;
+		jfin=ji2;
+		ifin1=ifin-1;
+		jfin1=jfin-1;
+		/*
+		* ---------------------------------------------------------------------
+		* initialize
+		* ---------------------------------------------------------------------
+		*/
+		for(i=0; i<=ISIZ2+1; i++){
+			for(k=0; k<=ISIZ3+1; k++){		
+				phi1[k][i]=0.0;
+				phi2[k][i]=0.0;
+			}
 		}
-	}
-	for(j=jbeg; j<jfin; j++){
-		for(i=ibeg; i<ifin; i++){
-			k=ki1;
-			phi1[j][i]=C2*(u[k][j][i][4]
-					-0.50*(u[k][j][i][1]*u[k][j][i][1]
-						+u[k][j][i][2]*u[k][j][i][2]
-						+u[k][j][i][3]*u[k][j][i][3])
-					/u[k][j][i][0]);
-			k=ki2-1;
-			phi2[j][i]=C2*(u[k][j][i][4]
-					-0.50*(u[k][j][i][1]*u[k][j][i][1]
-						+u[k][j][i][2]*u[k][j][i][2]
-						+u[k][j][i][3]*u[k][j][i][3])
-					/u[k][j][i][0]);
-		}
-	}
-	frc1=0.0;
-	for(j=jbeg; j<jfin1; j++){
-		for(i=ibeg; i<ifin1; i++){
-			frc1=frc1+(phi1[j][i]
-					+phi1[j][i+1]
-					+phi1[j+1][i]
-					+phi1[j+1][i+1]
-					+phi2[j][i]
-					+phi2[j][i+1]
-					+phi2[j+1][i]
-					+phi2[j+1][i+1]);
-		}
-	}
-	frc1=dxi*deta*frc1;
-	/*
-	 * ---------------------------------------------------------------------
-	 * initialize
-	 * ---------------------------------------------------------------------
-	 */
-	for(i=0; i<=ISIZ2+1; i++){
-		for(k=0; k<=ISIZ3+1; k++){		
-			phi1[k][i]=0.0;
-			phi2[k][i]=0.0;
-		}
-	}
-	if(jbeg==ji1){
-		for(k=ki1; k<ki2; k++){
+		for(j=jbeg; j<jfin; j++){
 			for(i=ibeg; i<ifin; i++){
-				phi1[k][i]=C2*(u[k][jbeg][i][4]
-						-0.50*(u[k][jbeg][i][1]*u[k][jbeg][i][1]
-							+u[k][jbeg][i][2]*u[k][jbeg][i][2]
-							+u[k][jbeg][i][3]*u[k][jbeg][i][3])
-						/u[k][jbeg][i][0]);
+				k=ki1;
+				phi1[j][i]=C2*(u[k][j][i][4]
+						-0.50*(u[k][j][i][1]*u[k][j][i][1]
+							+u[k][j][i][2]*u[k][j][i][2]
+							+u[k][j][i][3]*u[k][j][i][3])
+						/u[k][j][i][0]);
+				k=ki2-1;
+				phi2[j][i]=C2*(u[k][j][i][4]
+						-0.50*(u[k][j][i][1]*u[k][j][i][1]
+							+u[k][j][i][2]*u[k][j][i][2]
+							+u[k][j][i][3]*u[k][j][i][3])
+						/u[k][j][i][0]);
 			}
 		}
-	}
-	if(jfin==ji2){
-		for(k=ki1; k<ki2; k++){
-			for(i=ibeg; i<ifin; i++){
-				phi2[k][i]=C2*(u[k][jfin-1][i][4]
-						-0.50*(u[k][jfin-1][i][1]*u[k][jfin-1][i][1]
-							+u[k][jfin-1][i][2]*u[k][jfin-1][i][2]
-							+u[k][jfin-1][i][3]*u[k][jfin-1][i][3])
-						/u[k][jfin-1][i][0]);
-			}
-		}
-	}
-	frc2=0.0;
-	for(k=ki1; k<ki2-1; k++){
-		for(i=ibeg; i<ifin1; i++){
-			frc2=frc2+(phi1[k][i]
-					+phi1[k][i+1]
-					+phi1[k+1][i]
-					+phi1[k+1][i+1]
-					+phi2[k][i]
-					+phi2[k][i+1]
-					+phi2[k+1][i]
-					+phi2[k+1][i+1]);
-		}
-	}
-	frc2=dxi*dzeta*frc2;
-	/*
-	 * ---------------------------------------------------------------------
-	 * initialize
-	 * ---------------------------------------------------------------------
-	 */
-	for(i=0; i<=ISIZ2+1; i++){
-		for(k=0; k<=ISIZ3+1; k++){		
-			phi1[k][i]=0.0;
-			phi2[k][i]=0.0;
-		}
-	}
-	if(ibeg==ii1){
-		for(k=ki1; k<ki2; k++){
-			for(j=jbeg; j<jfin; j++){
-				phi1[k][j]=C2*(u[k][j][ibeg][4]
-						-0.50*(u[k][j][ibeg][1]*u[k][j][ibeg][1]
-							+u[k][j][ibeg][2]*u[k][j][ibeg][2]
-							+u[k][j][ibeg][3]*u[k][j][ibeg][3])
-						/u[k][j][ibeg][0]);
-			}
-		}
-	}
-	if(ifin==ii2){
-		for(k=ki1; k<ki2; k++){
-			for(j=jbeg; j<jfin; j++){
-				phi2[k][j]=C2*(u[k][j][ifin-1][4]
-						-0.50*(u[k][j][ifin-1][1]*u[k][j][ifin-1][1]
-							+u[k][j][ifin-1][2]*u[k][j][ifin-1][2]
-							+u[k][j][ifin-1][3]*u[k][j][ifin-1][3])
-						/u[k][j][ifin-1][0]);
-			}
-		}
-	}
-	frc3=0.0;
-	for(k=ki1; k<ki2-1; k++){
+		frc1=0.0;
 		for(j=jbeg; j<jfin1; j++){
-			frc3=frc3+(phi1[k][j]
-					+phi1[k][j+1]
-					+phi1[k+1][j]
-					+phi1[k+1][j+1]
-					+phi2[k][j]
-					+phi2[k][j+1]
-					+phi2[k+1][j]
-					+phi2[k+1][j+1]);
+			for(i=ibeg; i<ifin1; i++){
+				frc1=frc1+(phi1[j][i]
+						+phi1[j][i+1]
+						+phi1[j+1][i]
+						+phi1[j+1][i+1]
+						+phi2[j][i]
+						+phi2[j][i+1]
+						+phi2[j+1][i]
+						+phi2[j+1][i+1]);
+			}
 		}
+		frc1=dxi*deta*frc1;
+		/*
+		* ---------------------------------------------------------------------
+		* initialize
+		* ---------------------------------------------------------------------
+		*/
+		for(i=0; i<=ISIZ2+1; i++){
+			for(k=0; k<=ISIZ3+1; k++){		
+				phi1[k][i]=0.0;
+				phi2[k][i]=0.0;
+			}
+		}
+		if(jbeg==ji1){
+			for(k=ki1; k<ki2; k++){
+				for(i=ibeg; i<ifin; i++){
+					phi1[k][i]=C2*(u[k][jbeg][i][4]
+							-0.50*(u[k][jbeg][i][1]*u[k][jbeg][i][1]
+								+u[k][jbeg][i][2]*u[k][jbeg][i][2]
+								+u[k][jbeg][i][3]*u[k][jbeg][i][3])
+							/u[k][jbeg][i][0]);
+				}
+			}
+		}
+		if(jfin==ji2){
+			for(k=ki1; k<ki2; k++){
+				for(i=ibeg; i<ifin; i++){
+					phi2[k][i]=C2*(u[k][jfin-1][i][4]
+							-0.50*(u[k][jfin-1][i][1]*u[k][jfin-1][i][1]
+								+u[k][jfin-1][i][2]*u[k][jfin-1][i][2]
+								+u[k][jfin-1][i][3]*u[k][jfin-1][i][3])
+							/u[k][jfin-1][i][0]);
+				}
+			}
+		}
+		frc2=0.0;
+		for(k=ki1; k<ki2-1; k++){
+			for(i=ibeg; i<ifin1; i++){
+				frc2=frc2+(phi1[k][i]
+						+phi1[k][i+1]
+						+phi1[k+1][i]
+						+phi1[k+1][i+1]
+						+phi2[k][i]
+						+phi2[k][i+1]
+						+phi2[k+1][i]
+						+phi2[k+1][i+1]);
+			}
+		}
+		frc2=dxi*dzeta*frc2;
+		/*
+		* ---------------------------------------------------------------------
+		* initialize
+		* ---------------------------------------------------------------------
+		*/
+		for(i=0; i<=ISIZ2+1; i++){
+			for(k=0; k<=ISIZ3+1; k++){		
+				phi1[k][i]=0.0;
+				phi2[k][i]=0.0;
+			}
+		}
+		if(ibeg==ii1){
+			for(k=ki1; k<ki2; k++){
+				for(j=jbeg; j<jfin; j++){
+					phi1[k][j]=C2*(u[k][j][ibeg][4]
+							-0.50*(u[k][j][ibeg][1]*u[k][j][ibeg][1]
+								+u[k][j][ibeg][2]*u[k][j][ibeg][2]
+								+u[k][j][ibeg][3]*u[k][j][ibeg][3])
+							/u[k][j][ibeg][0]);
+				}
+			}
+		}
+		if(ifin==ii2){
+			for(k=ki1; k<ki2; k++){
+				for(j=jbeg; j<jfin; j++){
+					phi2[k][j]=C2*(u[k][j][ifin-1][4]
+							-0.50*(u[k][j][ifin-1][1]*u[k][j][ifin-1][1]
+								+u[k][j][ifin-1][2]*u[k][j][ifin-1][2]
+								+u[k][j][ifin-1][3]*u[k][j][ifin-1][3])
+							/u[k][j][ifin-1][0]);
+				}
+			}
+		}
+		frc3=0.0;
+		for(k=ki1; k<ki2-1; k++){
+			for(j=jbeg; j<jfin1; j++){
+				frc3=frc3+(phi1[k][j]
+						+phi1[k][j+1]
+						+phi1[k+1][j]
+						+phi1[k+1][j+1]
+						+phi2[k][j]
+						+phi2[k][j+1]
+						+phi2[k+1][j]
+						+phi2[k+1][j+1]);
+			}
+		}
+		frc3=deta*dzeta*frc3;
+		frc=0.25*(frc1+frc2+frc3);
 	}
-	frc3=deta*dzeta*frc3;
-	frc=0.25*(frc1+frc2+frc3);
 }
 
 void read_input(){
@@ -2138,10 +2336,12 @@ void read_input(){
 				"     ISIZ1, ISIZ2 AND ISIZ3 RESPECTIVELY\n");
 		exit(EXIT_FAILURE);
 	}
-	printf("\n\n NAS Parallel Benchmarks 4.1 Parallel C++ version with OpenMP - LU Benchmark\n\n");
-	printf(" Size: %4dx%4dx%4d\n",nx0,ny0,nz0);
-	printf(" Iterations: %4d\n",itmax);
-	printf("\n");
+  	if(workrank == 0){
+		printf("\n\n NAS Parallel Benchmarks 4.1 Parallel C++ version with OpenMP - LU Benchmark\n\n");
+		printf(" Size: %4dx%4dx%4d\n",nx0,ny0,nz0);
+		printf(" Iterations: %4d\n",itmax);
+		printf("\n");
+  	}
 }
 
 /*
@@ -2155,6 +2355,7 @@ void rhs(){
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j, k, m;
 	double q;
 	double tmp, utmp[ISIZ3][6], rtmp[ISIZ3][5];
@@ -2167,10 +2368,12 @@ void rhs(){
 	double u21km1, u31km1, u41km1, u51km1;
 	double flux[ISIZ1][5];
 
+  	distribute(beg, end, ny, 0, 0);
+
 	if(timeron){timer_start(T_RHS);}
 	#pragma omp for
 	for(k=0; k<nz; k++){
-		for(j=0; j<ny; j++){
+		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
 					rsd[k][j][i][m]=-frct[k][j][i][m];
@@ -2184,15 +2387,18 @@ void rhs(){
 			}
 		}
 	}
+  	argo::barrier(nthreads);
 	if(timeron){timer_start(T_RHSX);}
 	/*
 	 * ---------------------------------------------------------------------
 	 * xi-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, jend, jst, 0);
+
 	#pragma omp for
 	for(k=1; k<nz-1; k++){
-		for(j=jst; j<jend; j++){
+		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=u[k][j][i][1];
 				u21=u[k][j][i][1]*rho_i[k][j][i];
@@ -2294,6 +2500,7 @@ void rhs(){
 			}
 		}
 	}
+  	argo::barrier(nthreads);
 	if(timeron){timer_stop(T_RHSX);}
 	if(timeron){timer_start(T_RHSY);}
 	/*
@@ -2301,8 +2508,10 @@ void rhs(){
 	 * eta-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, nz-1, 1, 0);
+
 	#pragma omp for
-	for(k=1; k<nz-1; k++){
+	for(k=beg; k<end; k++){
 		for(i=ist; i<iend; i++){
 			for(j=0; j<ny; j++){
 				flux[j][0]=u[k][j][i][2];
@@ -2411,6 +2620,7 @@ void rhs(){
 			}
 		}
 	}
+  	argo::barrier(nthreads);
 	if(timeron){timer_stop(T_RHSY);}
 	if(timeron){timer_start(T_RHSZ);}
 	/*
@@ -2418,8 +2628,10 @@ void rhs(){
 	 * zeta-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, jend, jst, 0);
+
 	#pragma omp for
-	for(j=jst; j<jend; j++){
+	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(k=0; k<nz; k++){
 				utmp[k][0]=u[k][j][i][0];
@@ -2530,6 +2742,7 @@ void rhs(){
 			}
 		}
 	}
+  	argo::barrier(nthreads);
 	if(timeron){timer_stop(T_RHSZ);}
 	if(timeron){timer_stop(T_RHS);}
 }
@@ -2545,15 +2758,36 @@ void setbv(){
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j, k, m;
 	double temp1[5], temp2[5];
+	/*
+	 * ---------------------------------------------------------------------
+	 * initialize u to zero so it is touched correctly (for first-touch)
+	 * ---------------------------------------------------------------------
+	 */
+  	distribute(beg, end, ISIZ2, 0, 0);
+
+  	#pragma omp for
+  	for(k=0; k<ISIZ3; k++){
+    		for(j=beg; j<end; j++){
+      			for(i=0; i<ISIZ1; i++){
+        			for(m=0; m<5; m++){
+          				u[k][j][i][m]=0.0;
+        			}
+      			}
+    		}
+  	}
+  	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * set the dependent variable values along the top and bottom faces
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, ny, 0, 0);
+
 	#pragma omp for
-	for(j=0; j<ny; j++){
+	for(j=beg; j<end; j++){
 		for(i=0; i<nx; i++){
 			exact(i, j, 0, temp1);
 			exact(i, j, nz-1, temp2);
@@ -2568,8 +2802,10 @@ void setbv(){
 	 * set the dependent variable values along north and south faces
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, nz, 0, 0);
+
 	#pragma omp for
-	for(k=0; k<nz; k++){
+	for(k=beg; k<end; k++){
 		for(i=0; i<nx; i++){
 			exact(i, 0, k, temp1);
 			exact(i, ny-1, k, temp2);
@@ -2584,9 +2820,11 @@ void setbv(){
 	 * set the dependent variable values along east and west faces
 	 * ---------------------------------------------------------------------
 	 */
+  	distribute(beg, end, ny, 0, 0);
+  
 	#pragma omp for
 	for(k=0; k<nz; k++){
-		for(j=0; j<ny; j++){
+		for(j=beg; j<end; j++){
 			exact(0, j, k, temp1);
 			exact(nx-1, j, k, temp2);
 			for(m=0; m<5; m++){
@@ -2747,16 +2985,19 @@ void setiv(){
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j, k, m;
 	double xi, eta, zeta;
 	double pxi, peta, pzeta;
 	double ue_1jk[5], ue_nx0jk[5], ue_i1k[5];
 	double ue_iny0k[5], ue_ij1[5], ue_ijnz[5];
 	
+  	distribute(beg, end, ny-1, 1, 0);
+	
 	#pragma omp for
 	for(k=1; k<nz-1; k++){
 		zeta=((double)k)/(nz-1);
-		for(j=1; j<ny-1; j++){
+		for(j=beg; j<end; j++){
 			eta=((double)j)/(ny0-1);
 			for(i=1; i<nx-1; i++){
 				xi=((double)i)/(nx0-1);
@@ -2794,6 +3035,7 @@ void ssor(int niter){
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
+  	int beg, end;
 	int i, j, k, m, n;
 	int istep;
 	double tmp, tv[ISIZ2*(ISIZ1/2*2+1)*5];
@@ -2804,15 +3046,23 @@ void ssor(int niter){
 	 * ---------------------------------------------------------------------
 	 */
 	tmp=1.0/(omega*(2.0-omega));
-	
+	/*
+	 * ---------------------------------------------------------------------
+	 * flags default-initialized because static, but initialize anyway
+	 * ---------------------------------------------------------------------
+	 */
+	gflag[workrank] = 0;
+	gflag2[workrank] = 0;
 	/*
 	 * ---------------------------------------------------------------------
 	 * initialize a,b,c,d to zero (guarantees that page tables have been
 	 * formed, if applicable on given architecture, before timestepping).
 	 * ---------------------------------------------------------------------
 	 */
-	#pragma omp parallel for private(i,j,n,m)
-	for(j=0; j<ISIZ2; j++){
+  	distribute(beg, end, ISIZ2, 0, 0);
+
+	#pragma omp parallel for firstprivate(beg, end) private(i,j,n,m)
+	for(j=beg; j<end; j++){
 		for(i=0; i<ISIZ1; i++){
 			for(n=0; n<5; n++){
 				for(m=0; m<5; m++){
@@ -2824,6 +3074,7 @@ void ssor(int niter){
 			}
 		}
 	}
+  	argo::barrier();
 	for(i=1;i<=T_LAST;i++){timer_clear(i);}
 
 	
@@ -2834,7 +3085,7 @@ void ssor(int niter){
 		 * compute the steady-state residuals
 		 * ---------------------------------------------------------------------
 	 	*/
-		rhs(); // "rsd", "frct", "rho_i", "qs", and "u" are touched..
+		rhs();
 
 		/*
 		 * ---------------------------------------------------------------------
@@ -2849,7 +3100,7 @@ void ssor(int niter){
 				jst,
 				jend,
 				rsd,
-				rsdnm); // "rsd" is touched but only read; could be cluster-level parallelized..
+				rsdnm);
 	} /* end parallel */
 
 
@@ -2873,13 +3124,15 @@ void ssor(int niter){
 			 * perform SSOR iteration
 			 * ---------------------------------------------------------------------
 			 */
+      			distribute(beg, end, jend, jst, 0);
+
 			if(timeron){
 				#pragma omp master
 					timer_start(T_RHS);
 			}
 			#pragma omp for
 			for(k=1; k<nz-1; k++){
-				for(j=jst; j<jend; j++){
+				for(j=beg; j<end; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){
 							rsd[k][j][i][m]=dt*rsd[k][j][i][m];
@@ -2902,7 +3155,7 @@ void ssor(int niter){
 					#pragma omp master
 						timer_start(T_JACLD);
 				}
-				jacld(k); // "d", "u", "a", "qs", "rho_i", "b" and "c" are touched..
+				jacld(k);
 				if(timeron){
 					#pragma omp master
 						timer_stop(T_JACLD);
@@ -2933,7 +3186,7 @@ void ssor(int niter){
 						jst,
 						jend,
 						nx0,
-						ny0); // "rsd", "a", "b", "c", and "d" are touched..
+						ny0);
 
 				if(timeron){
 					#pragma omp master
@@ -2941,7 +3194,7 @@ void ssor(int niter){
 				}
 			}
 
-			#pragma omp barrier
+			argo::barrier(nthreads);
 
 			for(k=nz-2; k>0; k--){
 				/*
@@ -2953,7 +3206,7 @@ void ssor(int niter){
 					#pragma omp master
 						timer_start(T_JACU);
 				}
-				jacu(k); // "d", "rho_i", "u", "a", "qs", "b", and "c" are touched..
+				jacu(k);
 				if(timeron){
 					#pragma omp master
 						timer_stop(T_JACU);
@@ -2974,7 +3227,7 @@ void ssor(int niter){
 						k,
 						omega,
 						rsd,
-						tv,
+						gtv,
 						d,
 						a,
 						b,
@@ -2984,7 +3237,7 @@ void ssor(int niter){
 						jst,
 						jend,
 						nx0,
-						ny0); // "rsd", "a", "b", "c", and "d" are touched..
+						ny0);
 
 				if(timeron){
 					#pragma omp master
@@ -2992,13 +3245,15 @@ void ssor(int niter){
 				}
 			}
 			
-			#pragma omp barrier
+			argo::barrier(nthreads);
 
 			/*
 			 * ---------------------------------------------------------------------
 			 * update the variables
 			 * ---------------------------------------------------------------------
 			 */
+      			distribute(beg, end, jend, jst, 0);
+
 			if(timeron){
 				#pragma omp master
 					timer_start(T_ADD);
@@ -3006,7 +3261,7 @@ void ssor(int niter){
 
 			#pragma omp for
 			for(k=1; k<nz-1; k++){
-				for(j=jst; j<jend; j++){
+				for(j=beg; j<end; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){
 							u[k][j][i][m]=u[k][j][i][m]+tmp*rsd[k][j][i][m];
@@ -3014,6 +3269,7 @@ void ssor(int niter){
 					}
 				}
 			}
+      			argo::barrier(nthreads);
 			if(timeron){
 				#pragma omp master
 					timer_stop(T_ADD);
@@ -3085,7 +3341,9 @@ void ssor(int niter){
 					(rsdnm[3]<tolrsd[3])&&
 					(rsdnm[4]<tolrsd[4])){
 				#pragma omp master
+          			if(workrank == 0){
 					printf(" \n convergence was achieved after %4d pseudo-time steps\n",istep);
+          			}
 				break;
 			}
 		}
@@ -3105,334 +3363,346 @@ void verify(double xcr[],
 		double xci,
 		char* class_npb,
 		boolean* verified){
-	double xcrref[5], xceref[5], xciref;
-	double xcrdif[5], xcedif[5], xcidif;
-	double epsilon, dtref=0.0;
-	int m;
-	/*
-	 * ---------------------------------------------------------------------
-	 * tolerance level
-	 * ---------------------------------------------------------------------
-	 */
-	epsilon=1.0e-08;
-	*class_npb='U';
-	*verified=TRUE;
-	for(m=0; m<5; m++){
-		xcrref[m]=1.0;
-		xceref[m]=1.0;
-	}
-	xciref=1.0;
-	if((nx0==12)&&(ny0==12)&&(nz0==12)&&(itmax==50)){
-		*class_npb='S';
-		dtref=5.0e-1;
+  	if(workrank == 0){
+		double xcrref[5], xceref[5], xciref;
+		double xcrdif[5], xcedif[5], xcidif;
+		double epsilon, dtref=0.0;
+		int m;
 		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of residual, for the (12X12X12) grid,
-		 * after 50 time steps, with DT = 5.0d-01
-		 * ---------------------------------------------------------------------
-		 */
-		xcrref[0]=1.6196343210976702e-02;
-		xcrref[1]=2.1976745164821318e-03;
-		xcrref[2]=1.5179927653399185e-03;
-		xcrref[3]=1.5029584435994323e-03;
-		xcrref[4]=3.4264073155896461e-02;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of solution error, for the (12X12X12) grid,
-		 * after 50 time steps, with DT = 5.0d-01
-		 * ---------------------------------------------------------------------
-		 */
-		xceref[0]=6.4223319957960924e-04;
-		xceref[1]=8.4144342047347926e-05;
-		xceref[2]=5.8588269616485186e-05;
-		xceref[3]=5.8474222595157350e-05;
-		xceref[4]=1.3103347914111294e-03;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference value of surface integral, for the (12X12X12) grid,
-		 * after 50 time steps, with DT = 5.0d-01
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=7.8418928865937083e+00;
-	}else if((nx0==33)&&(ny0==33)&&(nz0==33)&&(itmax==300)){
-		*class_npb='W'; /* SPEC95fp size */
-		dtref=1.5e-3;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of residual, for the (33x33x33) grid,
-		 * after 300 time steps, with DT = 1.5d-3
-		 * ---------------------------------------------------------------------
-		 */
-		xcrref[0]=0.1236511638192e+02;
-		xcrref[1]=0.1317228477799e+01;
-		xcrref[2]=0.2550120713095e+01;
-		xcrref[3]=0.2326187750252e+01;
-		xcrref[4]=0.2826799444189e+02;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of solution error, for the (33X33X33) grid,
-		 * ---------------------------------------------------------------------
-		 */
-		xceref[0]=0.4867877144216e+00;
-		xceref[1]=0.5064652880982e-01;
-		xceref[2]=0.9281818101960e-01;
-		xceref[3]=0.8570126542733e-01;
-		xceref[4]=0.1084277417792e+01;
-		/*
-		 * ---------------------------------------------------------------------
-		 * rReference value of surface integral, for the (33X33X33) grid,
-		 * after 300 time steps, with DT = 1.5d-3
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=0.1161399311023e+02;
-	}else if((nx0==64)&&(ny0==64)&&(nz0==64)&&(itmax==250)){
-		*class_npb='A';
-		dtref=2.0e+0;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of residual, for the (64X64X64) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xcrref[0]=7.7902107606689367e+02;
-		xcrref[1]=6.3402765259692870e+01;
-		xcrref[2]=1.9499249727292479e+02;
-		xcrref[3]=1.7845301160418537e+02;
-		xcrref[4]=1.8384760349464247e+03;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of solution error, for the (64X64X64) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xceref[0]=2.9964085685471943e+01;
-		xceref[1]=2.8194576365003349e+00;
-		xceref[2]=7.3473412698774742e+00;
-		xceref[3]=6.7139225687777051e+00;
-		xceref[4]=7.0715315688392578e+01;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference value of surface integral, for the (64X64X64) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=2.6030925604886277e+01;
-	}else if((nx0==102)&&(ny0==102)&&(nz0==102)&&(itmax==250)){
-		*class_npb='B';
-		dtref=2.0e+0;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of residual, for the (102X102X102) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xcrref[0]=3.5532672969982736e+03;
-		xcrref[1]=2.6214750795310692e+02;
-		xcrref[2]=8.8333721850952190e+02;
-		xcrref[3]=7.7812774739425265e+02;
-		xcrref[4]=7.3087969592545314e+03;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of solution error, for the (102X102X102) 
-		 * grid, after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xceref[0]=1.1401176380212709e+02;
-		xceref[1]=8.1098963655421574e+00;
-		xceref[2]=2.8480597317698308e+01;
-		xceref[3]=2.5905394567832939e+01;
-		xceref[4]=2.6054907504857413e+02;
-		/*
-		   c---------------------------------------------------------------------
-		 * reference value of surface integral, for the (102X102X102) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=4.7887162703308227e+01;
-	}else if((nx0==162)&&(ny0==162)&&(nz0==162)&&(itmax==250)){
-		*class_npb='C';
-		dtref=2.0e+0;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of residual, for the (162X162X162) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xcrref[0]=1.03766980323537846e+04;
-		xcrref[1]=8.92212458801008552e+02;
-		xcrref[2]=2.56238814582660871e+03;
-		xcrref[3]=2.19194343857831427e+03;
-		xcrref[4]=1.78078057261061185e+04;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of solution error, for the (162X162X162) 
-		 * grid, after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xceref[0]=2.15986399716949279e+02;
-		xceref[1]=1.55789559239863600e+01;
-		xceref[2]=5.41318863077207766e+01;
-		xceref[3]=4.82262643154045421e+01;
-		xceref[4]=4.55902910043250358e+02;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference value of surface integral, for the (162X162X162) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=6.66404553572181300e+01;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference value of surface integral, for the (162X162X162) grid,
-		 * after 250 time steps, with DT = 2.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=6.66404553572181300e+01;
-	}else if((nx0==408)&&(ny0==408)&&(nz0==408)&&(itmax== 300)){
-		*class_npb='D';
-		dtref=1.0e+0;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of residual, for the (408X408X408) grid,
-		 * after 300 time steps, with DT = 1.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xcrref[0]=0.4868417937025e+05;
-		xcrref[1]=0.4696371050071e+04;
-		xcrref[2]=0.1218114549776e+05;
-		xcrref[3]=0.1033801493461e+05;
-		xcrref[4]=0.7142398413817e+05;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of solution error, for the (408X408X408) 
-		 * grid, after 300 time steps, with DT = 1.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xceref[0]=0.3752393004482e+03;
-		xceref[1]=0.3084128893659e+02;
-		xceref[2]=0.9434276905469e+02;
-		xceref[3]=0.8230686681928e+02;
-		xceref[4]=0.7002620636210e+03;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference value of surface integral, for the (408X408X408) grid,
-		 * after 300 time steps, with DT = 1.0d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=0.8334101392503e+02;
-	}else if((nx0==1020)&&(ny0==1020)&&(nz0==1020)&&(itmax==300)){
-		*class_npb='E';
-		dtref=0.5e+0;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of residual, for the (1020X1020X1020) grid,
-		 * after 300 time steps, with DT = 0.5d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xcrref[0]=0.2099641687874e+06;
-		xcrref[1]=0.2130403143165e+05;
-		xcrref[2]=0.5319228789371e+05;
-		xcrref[3]=0.4509761639833e+05;
-		xcrref[4]=0.2932360006590e+06;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference values of RMS-norms of solution error, for the (1020X1020X1020) 
-		 * grid, after 300 time steps, with DT = 0.5d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xceref[0]=0.4800572578333e+03;
-		xceref[1]=0.4221993400184e+02;
-		xceref[2]=0.1210851906824e+03;
-		xceref[3]=0.1047888986770e+03;
-		xceref[4]=0.8363028257389e+03;
-		/*
-		 * ---------------------------------------------------------------------
-		 * reference value of surface integral, for the (1020X1020X1020) grid,
-		 * after 300 time steps, with DT = 0.5d+00
-		 * ---------------------------------------------------------------------
-		 */
-		xciref=0.9512163272273e+02;
-	}else{
-		*verified=FALSE;
-	}
-	/*
-	 * ---------------------------------------------------------------------
-	 * verification test for residuals if gridsize is one of 
-	 * the defined grid sizes above (class .ne. 'U')
-	 * ---------------------------------------------------------------------
-	 * compute the difference of solution values and the known reference values.
-	 * ---------------------------------------------------------------------
-	 */
-	for(m=0; m<5; m++){
-		xcrdif[m]=fabs((xcr[m]-xcrref[m])/xcrref[m]);
-		xcedif[m]=fabs((xce[m]-xceref[m])/xceref[m]);
-	}
-	xcidif=fabs((xci-xciref)/xciref);
-	/*
-	 * ---------------------------------------------------------------------
-	 * output the comparison of computed results to known cases.
-	 * ---------------------------------------------------------------------
-	 */
-	if(*class_npb!='U'){
-		printf("\n Verification being performed for class_npb %c\n",*class_npb);
-		printf(" Accuracy setting for epsilon = %20.13E\n",epsilon);
-		*verified=(fabs(dt-dtref)<=epsilon);
-		if(!(*verified)){
-			*class_npb='U';
-			printf(" DT does not match the reference value of %15.8E\n",dtref);
+		* ---------------------------------------------------------------------
+		* tolerance level
+		* ---------------------------------------------------------------------
+		*/
+		epsilon=1.0e-08;
+		*class_npb='U';
+		*verified=TRUE;
+		for(m=0; m<5; m++){
+			xcrref[m]=1.0;
+			xceref[m]=1.0;
 		}
-	}else{ 
-		printf(" Unknown class_npb\n");
-	}
-	if(*class_npb!='U'){
-		printf(" Comparison of RMS-norms of residual\n");
-	}else{
-		printf(" RMS-norms of residual\n");
-	}
-	for(m=0; m<5; m++){
-		if(*class_npb=='U'){
-			printf("          %2d  %20.13E\n",m+1,xcr[m]);
-		}else if(xcrdif[m]<=epsilon){
-			printf("          %2d  %20.13E%20.13E%20.13E\n",m+1,xcr[m],xcrref[m],xcrdif[m]);
-		}else{ 
-			*verified=FALSE;
-			printf(" FAILURE: %2d  %20.13E%20.13E%20.13E\n",m+1,xcr[m],xcrref[m],xcrdif[m]);
-		}
-	}
-	if(*class_npb!='U'){
-		printf(" Comparison of RMS-norms of solution error\n");
-	}else{
-		printf(" RMS-norms of solution error\n");
-	}
-	for(m=0; m<5; m++){
-		if(*class_npb=='U'){
-			printf("          %2d  %20.13E\n",m+1,xce[m]);
-		}else if(xcedif[m]<=epsilon){
-			printf("          %2d  %20.13E%20.13E%20.13E\n",m+1,xce[m],xceref[m],xcedif[m]);
+		xciref=1.0;
+		if((nx0==12)&&(ny0==12)&&(nz0==12)&&(itmax==50)){
+			*class_npb='S';
+			dtref=5.0e-1;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of residual, for the (12X12X12) grid,
+			* after 50 time steps, with DT = 5.0d-01
+			* ---------------------------------------------------------------------
+			*/
+			xcrref[0]=1.6196343210976702e-02;
+			xcrref[1]=2.1976745164821318e-03;
+			xcrref[2]=1.5179927653399185e-03;
+			xcrref[3]=1.5029584435994323e-03;
+			xcrref[4]=3.4264073155896461e-02;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of solution error, for the (12X12X12) grid,
+			* after 50 time steps, with DT = 5.0d-01
+			* ---------------------------------------------------------------------
+			*/
+			xceref[0]=6.4223319957960924e-04;
+			xceref[1]=8.4144342047347926e-05;
+			xceref[2]=5.8588269616485186e-05;
+			xceref[3]=5.8474222595157350e-05;
+			xceref[4]=1.3103347914111294e-03;
+			/*
+			* ---------------------------------------------------------------------
+			* reference value of surface integral, for the (12X12X12) grid,
+			* after 50 time steps, with DT = 5.0d-01
+			* ---------------------------------------------------------------------
+			*/
+			xciref=7.8418928865937083e+00;
+		}else if((nx0==33)&&(ny0==33)&&(nz0==33)&&(itmax==300)){
+			*class_npb='W'; /* SPEC95fp size */
+			dtref=1.5e-3;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of residual, for the (33x33x33) grid,
+			* after 300 time steps, with DT = 1.5d-3
+			* ---------------------------------------------------------------------
+			*/
+			xcrref[0]=0.1236511638192e+02;
+			xcrref[1]=0.1317228477799e+01;
+			xcrref[2]=0.2550120713095e+01;
+			xcrref[3]=0.2326187750252e+01;
+			xcrref[4]=0.2826799444189e+02;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of solution error, for the (33X33X33) grid,
+			* ---------------------------------------------------------------------
+			*/
+			xceref[0]=0.4867877144216e+00;
+			xceref[1]=0.5064652880982e-01;
+			xceref[2]=0.9281818101960e-01;
+			xceref[3]=0.8570126542733e-01;
+			xceref[4]=0.1084277417792e+01;
+			/*
+			* ---------------------------------------------------------------------
+			* rReference value of surface integral, for the (33X33X33) grid,
+			* after 300 time steps, with DT = 1.5d-3
+			* ---------------------------------------------------------------------
+			*/
+			xciref=0.1161399311023e+02;
+		}else if((nx0==64)&&(ny0==64)&&(nz0==64)&&(itmax==250)){
+			*class_npb='A';
+			dtref=2.0e+0;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of residual, for the (64X64X64) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xcrref[0]=7.7902107606689367e+02;
+			xcrref[1]=6.3402765259692870e+01;
+			xcrref[2]=1.9499249727292479e+02;
+			xcrref[3]=1.7845301160418537e+02;
+			xcrref[4]=1.8384760349464247e+03;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of solution error, for the (64X64X64) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xceref[0]=2.9964085685471943e+01;
+			xceref[1]=2.8194576365003349e+00;
+			xceref[2]=7.3473412698774742e+00;
+			xceref[3]=6.7139225687777051e+00;
+			xceref[4]=7.0715315688392578e+01;
+			/*
+			* ---------------------------------------------------------------------
+			* reference value of surface integral, for the (64X64X64) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xciref=2.6030925604886277e+01;
+		}else if((nx0==102)&&(ny0==102)&&(nz0==102)&&(itmax==250)){
+			*class_npb='B';
+			dtref=2.0e+0;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of residual, for the (102X102X102) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xcrref[0]=3.5532672969982736e+03;
+			xcrref[1]=2.6214750795310692e+02;
+			xcrref[2]=8.8333721850952190e+02;
+			xcrref[3]=7.7812774739425265e+02;
+			xcrref[4]=7.3087969592545314e+03;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of solution error, for the (102X102X102) 
+			* grid, after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xceref[0]=1.1401176380212709e+02;
+			xceref[1]=8.1098963655421574e+00;
+			xceref[2]=2.8480597317698308e+01;
+			xceref[3]=2.5905394567832939e+01;
+			xceref[4]=2.6054907504857413e+02;
+			/*
+			c---------------------------------------------------------------------
+			* reference value of surface integral, for the (102X102X102) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xciref=4.7887162703308227e+01;
+		}else if((nx0==162)&&(ny0==162)&&(nz0==162)&&(itmax==250)){
+			*class_npb='C';
+			dtref=2.0e+0;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of residual, for the (162X162X162) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xcrref[0]=1.03766980323537846e+04;
+			xcrref[1]=8.92212458801008552e+02;
+			xcrref[2]=2.56238814582660871e+03;
+			xcrref[3]=2.19194343857831427e+03;
+			xcrref[4]=1.78078057261061185e+04;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of solution error, for the (162X162X162) 
+			* grid, after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xceref[0]=2.15986399716949279e+02;
+			xceref[1]=1.55789559239863600e+01;
+			xceref[2]=5.41318863077207766e+01;
+			xceref[3]=4.82262643154045421e+01;
+			xceref[4]=4.55902910043250358e+02;
+			/*
+			* ---------------------------------------------------------------------
+			* reference value of surface integral, for the (162X162X162) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xciref=6.66404553572181300e+01;
+			/*
+			* ---------------------------------------------------------------------
+			* reference value of surface integral, for the (162X162X162) grid,
+			* after 250 time steps, with DT = 2.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xciref=6.66404553572181300e+01;
+		}else if((nx0==408)&&(ny0==408)&&(nz0==408)&&(itmax== 300)){
+			*class_npb='D';
+			dtref=1.0e+0;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of residual, for the (408X408X408) grid,
+			* after 300 time steps, with DT = 1.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xcrref[0]=0.4868417937025e+05;
+			xcrref[1]=0.4696371050071e+04;
+			xcrref[2]=0.1218114549776e+05;
+			xcrref[3]=0.1033801493461e+05;
+			xcrref[4]=0.7142398413817e+05;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of solution error, for the (408X408X408) 
+			* grid, after 300 time steps, with DT = 1.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xceref[0]=0.3752393004482e+03;
+			xceref[1]=0.3084128893659e+02;
+			xceref[2]=0.9434276905469e+02;
+			xceref[3]=0.8230686681928e+02;
+			xceref[4]=0.7002620636210e+03;
+			/*
+			* ---------------------------------------------------------------------
+			* reference value of surface integral, for the (408X408X408) grid,
+			* after 300 time steps, with DT = 1.0d+00
+			* ---------------------------------------------------------------------
+			*/
+			xciref=0.8334101392503e+02;
+		}else if((nx0==1020)&&(ny0==1020)&&(nz0==1020)&&(itmax==300)){
+			*class_npb='E';
+			dtref=0.5e+0;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of residual, for the (1020X1020X1020) grid,
+			* after 300 time steps, with DT = 0.5d+00
+			* ---------------------------------------------------------------------
+			*/
+			xcrref[0]=0.2099641687874e+06;
+			xcrref[1]=0.2130403143165e+05;
+			xcrref[2]=0.5319228789371e+05;
+			xcrref[3]=0.4509761639833e+05;
+			xcrref[4]=0.2932360006590e+06;
+			/*
+			* ---------------------------------------------------------------------
+			* reference values of RMS-norms of solution error, for the (1020X1020X1020) 
+			* grid, after 300 time steps, with DT = 0.5d+00
+			* ---------------------------------------------------------------------
+			*/
+			xceref[0]=0.4800572578333e+03;
+			xceref[1]=0.4221993400184e+02;
+			xceref[2]=0.1210851906824e+03;
+			xceref[3]=0.1047888986770e+03;
+			xceref[4]=0.8363028257389e+03;
+			/*
+			* ---------------------------------------------------------------------
+			* reference value of surface integral, for the (1020X1020X1020) grid,
+			* after 300 time steps, with DT = 0.5d+00
+			* ---------------------------------------------------------------------
+			*/
+			xciref=0.9512163272273e+02;
 		}else{
 			*verified=FALSE;
-			printf(" FAILURE: %2d  %20.13E%20.13E%20.13E\n",m+1,xce[m],xceref[m],xcedif[m]);
+		}
+		/*
+		* ---------------------------------------------------------------------
+		* verification test for residuals if gridsize is one of 
+		* the defined grid sizes above (class .ne. 'U')
+		* ---------------------------------------------------------------------
+		* compute the difference of solution values and the known reference values.
+		* ---------------------------------------------------------------------
+		*/
+		for(m=0; m<5; m++){
+			xcrdif[m]=fabs((xcr[m]-xcrref[m])/xcrref[m]);
+			xcedif[m]=fabs((xce[m]-xceref[m])/xceref[m]);
+		}
+		xcidif=fabs((xci-xciref)/xciref);
+		/*
+		* ---------------------------------------------------------------------
+		* output the comparison of computed results to known cases.
+		* ---------------------------------------------------------------------
+		*/
+		if(*class_npb!='U'){
+			printf("\n Verification being performed for class_npb %c\n",*class_npb);
+			printf(" Accuracy setting for epsilon = %20.13E\n",epsilon);
+			*verified=(fabs(dt-dtref)<=epsilon);
+			if(!(*verified)){
+				*class_npb='U';
+				printf(" DT does not match the reference value of %15.8E\n",dtref);
+			}
+		}else{ 
+			printf(" Unknown class_npb\n");
+		}
+		if(*class_npb!='U'){
+			printf(" Comparison of RMS-norms of residual\n");
+		}else{
+			printf(" RMS-norms of residual\n");
+		}
+		for(m=0; m<5; m++){
+			if(*class_npb=='U'){
+				printf("          %2d  %20.13E\n",m+1,xcr[m]);
+			}else if(xcrdif[m]<=epsilon){
+				printf("          %2d  %20.13E%20.13E%20.13E\n",m+1,xcr[m],xcrref[m],xcrdif[m]);
+			}else{ 
+				*verified=FALSE;
+				printf(" FAILURE: %2d  %20.13E%20.13E%20.13E\n",m+1,xcr[m],xcrref[m],xcrdif[m]);
+			}
+		}
+		if(*class_npb!='U'){
+			printf(" Comparison of RMS-norms of solution error\n");
+		}else{
+			printf(" RMS-norms of solution error\n");
+		}
+		for(m=0; m<5; m++){
+			if(*class_npb=='U'){
+				printf("          %2d  %20.13E\n",m+1,xce[m]);
+			}else if(xcedif[m]<=epsilon){
+				printf("          %2d  %20.13E%20.13E%20.13E\n",m+1,xce[m],xceref[m],xcedif[m]);
+			}else{
+				*verified=FALSE;
+				printf(" FAILURE: %2d  %20.13E%20.13E%20.13E\n",m+1,xce[m],xceref[m],xcedif[m]);
+			}
+		}
+		if(*class_npb!='U'){
+			printf(" Comparison of surface integral\n");
+		}else{
+			printf(" Surface integral\n");
+		}
+		if(*class_npb=='U'){
+			printf("              %20.13E\n",xci);
+		}else if(xcidif<=epsilon){
+			printf("              %20.13E%20.13E%20.13E\n",xci,xciref,xcidif);
+		}else{
+			*verified=FALSE;
+			printf(" FAILURE:     %20.13E%20.13E%20.13E\n",xci,xciref,xcidif);
+		}
+		if(*class_npb=='U'){
+			printf(" No reference values provided\n");
+			printf("No verification performed\n");
+		}else if(*verified){
+			printf(" Verification Successful\n");
+		}else{
+			printf(" Verification failed\n");
 		}
 	}
-	if(*class_npb!='U'){
-		printf(" Comparison of surface integral\n");
-	}else{
-		printf(" Surface integral\n");
-	}
-	if(*class_npb=='U'){
-		printf("              %20.13E\n",xci);
-	}else if(xcidif<=epsilon){
-		printf("              %20.13E%20.13E%20.13E\n",xci,xciref,xcidif);
-	}else{
-		*verified=FALSE;
-		printf(" FAILURE:     %20.13E%20.13E%20.13E\n",xci,xciref,xcidif);
-	}
-	if(*class_npb=='U'){
-		printf(" No reference values provided\n");
-		printf("No verification performed\n");
-	}else if(*verified){
-		printf(" Verification Successful\n");
-	}else{
-		printf(" Verification failed\n");
-	}
+}
+
+void distribute(int& beg,
+		int& end,
+		const int& loop_size,
+		const int& beg_offset,
+    		const int& less_equal){
+	int chunk = loop_size / numtasks;
+	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
+	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }

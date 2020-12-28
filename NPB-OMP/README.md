@@ -44,6 +44,8 @@ The conventions we used in our porting can be found [here](notes-conventions.md)
 
 **NPB-FF** - This directory contains the parallel version implemented with FastFlow.
 
+**NPB-DSM** - This directory contains the parallel version implemented with ArgoDSM/OpenMP.
+
 # The Five Kernels and Three Pseudo-applications
 
 Each directory is independent and contains its own implemented version of the kernels and pseudo-applications:

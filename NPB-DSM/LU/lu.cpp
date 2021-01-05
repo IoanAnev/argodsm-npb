@@ -408,20 +408,22 @@ int main(int argc, char* argv[]){
 	 * more timers
 	 * ---------------------------------------------------------------------
 	 */
-	if(timeron){
-		for(i=1; i<=T_LAST; i++){
-			trecs[i]=timer_read(i);
-		}
-		tmax=maxtime;
-		if(tmax==0.0){tmax=1.0;}
-		printf("  SECTION     Time (secs)\n");
-		for(i=1; i<=T_LAST; i++){
-			printf("  %-8s:%9.3f  (%6.2f%%)\n",t_names[i],trecs[i],trecs[i]*100./tmax);
-			if(i==T_RHS){
-				t=trecs[T_RHSX]+trecs[T_RHSY]+trecs[T_RHSZ];
-				printf("     --> %8s:%9.3f  (%6.2f%%)\n", "sub-rhs",t,t*100./tmax);
-				t=trecs[i]-t;
-				printf("     --> %8s:%9.3f  (%6.2f%%)\n", "rest-rhs",t,t*100./tmax);
+	if(workrank == 0){
+		if(timeron){
+			for(i=1; i<=T_LAST; i++){
+				trecs[i]=timer_read(i);
+			}
+			tmax=maxtime;
+			if(tmax==0.0){tmax=1.0;}
+			printf("  SECTION     Time (secs)\n");
+			for(i=1; i<=T_LAST; i++){
+				printf("  %-8s:%9.3f  (%6.2f%%)\n",t_names[i],trecs[i],trecs[i]*100./tmax);
+				if(i==T_RHS){
+					t=trecs[T_RHSX]+trecs[T_RHSY]+trecs[T_RHSZ];
+					printf("     --> %8s:%9.3f  (%6.2f%%)\n", "sub-rhs",t,t*100./tmax);
+					t=trecs[i]-t;
+					printf("     --> %8s:%9.3f  (%6.2f%%)\n", "rest-rhs",t,t*100./tmax);
+				}
 			}
 		}
 	}
@@ -495,6 +497,7 @@ void blts(int nx,
 	 */
   	int beg, end;
 	int i, j, m;
+	bool unlock = 0;
 	double tmp, tmp1;
 	double tmat[5][5], tv[5];
 
@@ -530,7 +533,7 @@ void blts(int nx,
 		}
 	}
 		
-	#pragma omp for schedule(static)
+	#pragma omp for nowait schedule(static)
 	for(j=beg; j<end; j++){
 
 		if (j != beg){
@@ -666,14 +669,15 @@ void blts(int nx,
 
 		if (j != end-1) flag[j] = 1; 
 		if (j != beg) flag[j-1] = 0;
-		if (j == end-1) argo::backend::release();
+		if (j == end-1) { unlock = 1; argo::backend::release(); }
 	}
 
-	#pragma omp master
+	if (unlock)
 	{
 		if (workrank != numtasks-1) gflag[workrank] = 1;
 		if (workrank != 0) gflag[workrank-1] = 0;
 		argo::backend::release();
+		unlock = 0;
 	}
 }
 
@@ -711,6 +715,7 @@ void buts(int nx,
 	double (*tv)[ISIZ1/2*2+1][5] = (double(*)[ISIZ1/2*2+1][5])pointer_tv;
 	int beg, end;
 	int i, j, m;
+	bool unlock = 0;
 	double tmp, tmp1;
 	double tmat[5][5];
 
@@ -746,7 +751,7 @@ void buts(int nx,
 		}
 	}
 
-	#pragma omp for schedule(static)
+	#pragma omp for nowait schedule(static)
 	for(j=end; j>=beg; j--){
 		
     		if (j != end){
@@ -884,14 +889,15 @@ void buts(int nx,
 
 		if (j != end) flag2[j+1] = 0;
 		if (j != beg) flag2[j] = 1; 
-		if (j == beg) argo::backend::release();
+		if (j == beg) { unlock = 1; argo::backend::release(); }
 	}
 
-	#pragma omp master
+	if (unlock)
 	{
 		if (workrank != numtasks-1) gflag2[workrank+1] = 0;
 		if (workrank != 0) gflag2[workrank] = 1;
 		argo::backend::release();
+		unlock = 0;
 	}
 }
 

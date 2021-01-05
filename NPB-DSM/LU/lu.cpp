@@ -516,6 +516,8 @@ void blts(int nx,
 
 	#pragma omp single
 	{
+		argo::backend::acquire();
+		
 		if (workrank != 0){
 			while (gflag[workrank-1] == 0){
 				argo::backend::acquire();
@@ -730,6 +732,8 @@ void buts(int nx,
 
 	#pragma omp single
 	{
+		argo::backend::acquire();
+
 		if (workrank != numtasks-1){
 			while (gflag2[workrank+1] == 0){
 				argo::backend::acquire();
@@ -964,8 +968,8 @@ void erhs(){
 
   	distribute(beg, end, ny, 0, 0);
 
-	#pragma omp for
 	for(k=0; k<nz; k++){
+		#pragma omp for schedule(static)
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
@@ -975,9 +979,9 @@ void erhs(){
 		}
 	}
 
-	#pragma omp for
 	for(k=0; k<nz; k++){
 		zeta=((double)k)/(nz-1);
+		#pragma omp for schedule(static)
 		for(j=beg; j<end; j++){
 			eta=((double)j)/(ny0-1 );
 			for(i=0; i<nx; i++){
@@ -1008,8 +1012,8 @@ void erhs(){
 	 */
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for
 	for(k=1; k<nz-1; k++){
+		#pragma omp for schedule(static)
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=rsd[k][j][i][1];
@@ -1123,7 +1127,7 @@ void erhs(){
 	 */
   	distribute(beg, end, nz-1, 1, 0);
 
-	#pragma omp for
+	#pragma omp for schedule(static)
 	for(k=beg; k<end; k++){
 		for(i=ist; i<iend; i++){
 			for(j=0; j<ny; j++){
@@ -1238,7 +1242,7 @@ void erhs(){
 	 */
   	distribute(beg, end, jend, jst, 0);
   
-	#pragma omp for
+	#pragma omp for schedule(static)
 	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(k=0; k<nz; k++){
@@ -1436,7 +1440,7 @@ void jacld(int k){
 
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for schedule(static)
+	#pragma omp for nowait schedule(static)
 	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			/*
@@ -1703,8 +1707,6 @@ void jacld(int k){
 				-dt*tx1*dx5;
 		}
 	}
-	#pragma omp single
-	argo::backend::acquire();
 }
 
 /*
@@ -1730,7 +1732,7 @@ void jacu(int k){
 
   	distribute(beg, end, jend-1, jst, 1);
 
-	#pragma omp for schedule(static)
+	#pragma omp for nowait schedule(static)
 	for (j=end; j>=beg; j--) {
 		for (i=iend-1; i>=ist; i--) {
 			/*
@@ -2017,8 +2019,6 @@ void jacu(int k){
 				-dt*tz1*dz5;
 		}
 	}
-	#pragma omp single
-	argo::backend::acquire();
 }
 
 /*
@@ -2058,8 +2058,8 @@ void l2norm(int nx0,
 
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for nowait
 	for(k=1; k<nz0-1; k++){
+		#pragma omp for nowait schedule(static)
 		for(j=beg; j<end; j++){
 			for(i=ist; i<iend; i++){
 				sum0 = sum0 + v[i][j][k][0] * v[i][j][k][0];
@@ -2371,8 +2371,8 @@ void rhs(){
   	distribute(beg, end, ny, 0, 0);
 
 	if(timeron){timer_start(T_RHS);}
-	#pragma omp for
 	for(k=0; k<nz; k++){
+		#pragma omp for schedule(static)
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
@@ -2396,8 +2396,8 @@ void rhs(){
 	 */
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for
 	for(k=1; k<nz-1; k++){
+		#pragma omp for schedule(static)
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=u[k][j][i][1];
@@ -2510,7 +2510,7 @@ void rhs(){
 	 */
   	distribute(beg, end, nz-1, 1, 0);
 
-	#pragma omp for
+	#pragma omp for schedule(static)
 	for(k=beg; k<end; k++){
 		for(i=ist; i<iend; i++){
 			for(j=0; j<ny; j++){
@@ -2630,7 +2630,7 @@ void rhs(){
 	 */
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for
+	#pragma omp for schedule(static)
 	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(k=0; k<nz; k++){
@@ -2768,8 +2768,8 @@ void setbv(){
 	 */
   	distribute(beg, end, ISIZ2, 0, 0);
 
-  	#pragma omp for
   	for(k=0; k<ISIZ3; k++){
+		#pragma omp for schedule(static)
     		for(j=beg; j<end; j++){
       			for(i=0; i<ISIZ1; i++){
         			for(m=0; m<5; m++){
@@ -2786,7 +2786,7 @@ void setbv(){
 	 */
   	distribute(beg, end, ny, 0, 0);
 
-	#pragma omp for
+	#pragma omp for schedule(static)
 	for(j=beg; j<end; j++){
 		for(i=0; i<nx; i++){
 			exact(i, j, 0, temp1);
@@ -2804,7 +2804,7 @@ void setbv(){
 	 */
   	distribute(beg, end, nz, 0, 0);
 
-	#pragma omp for
+	#pragma omp for schedule(static)
 	for(k=beg; k<end; k++){
 		for(i=0; i<nx; i++){
 			exact(i, 0, k, temp1);
@@ -2822,8 +2822,8 @@ void setbv(){
 	 */
   	distribute(beg, end, ny, 0, 0);
   
-	#pragma omp for
 	for(k=0; k<nz; k++){
+		#pragma omp for schedule(static)
 		for(j=beg; j<end; j++){
 			exact(0, j, k, temp1);
 			exact(nx-1, j, k, temp2);
@@ -2994,9 +2994,9 @@ void setiv(){
 	
   	distribute(beg, end, ny-1, 1, 0);
 	
-	#pragma omp for
 	for(k=1; k<nz-1; k++){
 		zeta=((double)k)/(nz-1);
+		#pragma omp for schedule(static)
 		for(j=beg; j<end; j++){
 			eta=((double)j)/(ny0-1);
 			for(i=1; i<nx-1; i++){
@@ -3061,7 +3061,7 @@ void ssor(int niter){
 	 */
   	distribute(beg, end, ISIZ2, 0, 0);
 
-	#pragma omp parallel for firstprivate(beg, end) private(i,j,n,m)
+	#pragma omp parallel for firstprivate(beg, end) private(i,j,n,m) schedule(static)
 	for(j=beg; j<end; j++){
 		for(i=0; i<ISIZ1; i++){
 			for(n=0; n<5; n++){
@@ -3117,7 +3117,9 @@ void ssor(int niter){
 		for(istep=1; istep<=niter; istep++){
 			if((istep%20)==0||istep==itmax||istep==1){
 				#pragma omp master
+				if(workrank == 0){
 					if(niter>1){printf(" Time step %4d\n",istep);}
+				}
 			}
 			/*
 			 * ---------------------------------------------------------------------
@@ -3130,8 +3132,8 @@ void ssor(int niter){
 				#pragma omp master
 					timer_start(T_RHS);
 			}
-			#pragma omp for
 			for(k=1; k<nz-1; k++){
+				#pragma omp for schedule(static)
 				for(j=beg; j<end; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){
@@ -3259,8 +3261,8 @@ void ssor(int niter){
 					timer_start(T_ADD);
 			}
 
-			#pragma omp for
 			for(k=1; k<nz-1; k++){
+				#pragma omp for schedule(static)
 				for(j=beg; j<end; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){

@@ -666,10 +666,10 @@ void blts(int nx,
 
 		if (j != end-1) flag[j] = 1; 
 		if (j != beg) flag[j-1] = 0;
-		argo::backend::release();
+		if (j == end-1) argo::backend::release();
 	}
 
-	#pragma omp single
+	#pragma omp master
 	{
 		if (workrank != numtasks-1) gflag[workrank] = 1;
 		if (workrank != 0) gflag[workrank-1] = 0;
@@ -884,10 +884,10 @@ void buts(int nx,
 
 		if (j != end) flag2[j+1] = 0;
 		if (j != beg) flag2[j] = 1; 
-		argo::backend::release();
+		if (j == beg) argo::backend::release();
 	}
 
-	#pragma omp single
+	#pragma omp master
 	{
 		if (workrank != numtasks-1) gflag2[workrank+1] = 0;
 		if (workrank != 0) gflag2[workrank] = 1;

@@ -17,8 +17,8 @@
  *      Gabriell Alves de Araujo <hexenoften@gmail.com>
  *      Júnior Löff <loffjh@gmail.com>
  *
- * OpenMP version:
- *      Júnior Löff <loffjh@gmail.com>
+ * ArgoDSM/OpenMP version:
+ *      Ioannis Anevlavis <iwananev@gmail.com>
  */
 
 #include "argo.hpp"

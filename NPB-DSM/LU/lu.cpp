@@ -206,7 +206,7 @@ int main(int argc, char* argv[]){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(10*1024*1024*1024UL);
+	argo::init(0.5*1024*1024*1024UL);
 	/*
 	 * -------------------------------------------------------------------------
 	 * fetch workrank, number of nodes, and number of threads
@@ -519,16 +519,20 @@ void blts(int nx,
 
 	#pragma omp single
 	{
-		argo::backend::acquire();
+		if (workrank != 0)
+			for(i=ist; i<iend; i++)
+				argo::backend::selective_acquire(&v[k][beg-1][i][0], 5*sizeof(double));
+			// this is better instead for invoking each time (doesn't work for buts())
+			//argo::backend::selective_acquire(&v[k][beg-1][ist][0], (iend-ist)*5*sizeof(double));
 		
 		if (workrank != 0){
-			while (gflag[workrank-1] == 0){
-				argo::backend::acquire();
+			while (gflag[workrank-1] == 0) {
+				argo::backend::selective_acquire(&gflag[workrank-1], sizeof(bool));
 			}
 		}
 		if (workrank != numtasks-1){
-			while (gflag[workrank] == 1){
-				argo::backend::acquire();
+			while (gflag[workrank] == 1) {
+				argo::backend::selective_acquire(&gflag[workrank], sizeof(bool));
 			}
 		}
 	}
@@ -667,16 +671,29 @@ void blts(int nx,
 			v[k][j][i][0]=tv[0]/tmat[0][0];
 		}
 
-		if (j != end-1) flag[j] = 1; 
+		if (j != end-1) flag[j] = 1;
 		if (j != beg) flag[j-1] = 0;
-		if (j == end-1) { unlock = 1; argo::backend::release(); }
+		
+		if (j == end-1) {
+			if (workrank != numtasks-1)
+				for(i=ist; i<iend; i++)
+					argo::backend::selective_release(&v[k][j][i][0], 5*sizeof(double));
+				// this is better instead for invoking each time (doesn't work for buts())
+				//argo::backend::selective_release(&v[k][j][ist][0], (iend-ist)*5*sizeof(double));
+			unlock = 1;
+		}
 	}
 
 	if (unlock)
 	{
-		if (workrank != numtasks-1) gflag[workrank] = 1;
-		if (workrank != 0) gflag[workrank-1] = 0;
-		argo::backend::release();
+		if (workrank != numtasks-1) {
+			gflag[workrank] = 1;
+			argo::backend::selective_release(&gflag[workrank], sizeof(bool));
+		}
+		if (workrank != 0) {
+			gflag[workrank-1] = 0;
+			argo::backend::selective_release(&gflag[workrank-1], sizeof(bool));
+		}
 		unlock = 0;
 	}
 }
@@ -737,16 +754,18 @@ void buts(int nx,
 
 	#pragma omp single
 	{
-		argo::backend::acquire();
+		if (workrank != numtasks-1)
+			for(i=iend-1; i>=ist; i--)
+				argo::backend::selective_acquire(&v[k][end+1][i][0], 5*sizeof(double));
 
 		if (workrank != numtasks-1){
 			while (gflag2[workrank+1] == 0){
-				argo::backend::acquire();
+				argo::backend::selective_acquire(&gflag2[workrank+1], sizeof(bool));
 			}
 		}
 		if (workrank != 0){
 			while (gflag2[workrank] == 1){
-				argo::backend::acquire();
+				argo::backend::selective_acquire(&gflag2[workrank], sizeof(bool));
 			}
 		}
 	}
@@ -754,18 +773,18 @@ void buts(int nx,
 	#pragma omp for nowait schedule(static)
 	for(j=end; j>=beg; j--){
 		
-    		if (j != end){
-      			while (flag2[j+1] == 0) {
+		if (j != end){
+			while (flag2[j+1] == 0) {
         			#pragma omp flush
-          				;
-      			}
-    		}
-    		if (j != beg){
-      			while (flag2[j] == 1){
-        			#pragma omp flush
-          				;
-      			}
-    		}
+					;
+			}
+		}
+		if (j != beg){
+			while (flag2[j] == 1){
+				#pragma omp flush
+					;
+			}
+		}
 
 		for(i=iend-1; i>=ist; i--){
 			for(m=0; m<5; m++){
@@ -888,15 +907,26 @@ void buts(int nx,
 		}
 
 		if (j != end) flag2[j+1] = 0;
-		if (j != beg) flag2[j] = 1; 
-		if (j == beg) { unlock = 1; argo::backend::release(); }
+		if (j != beg) flag2[j] = 1;
+
+		if (j == beg) {
+			if (workrank != 0)
+				for(i=iend-1; i>=ist; i--)
+					argo::backend::selective_release(&v[k][j][i][0], 5*sizeof(double));
+			unlock = 1;
+		}
 	}
 
 	if (unlock)
 	{
-		if (workrank != numtasks-1) gflag2[workrank+1] = 0;
-		if (workrank != 0) gflag2[workrank] = 1;
-		argo::backend::release();
+		if (workrank != numtasks-1) {
+			gflag2[workrank+1] = 0;
+			argo::backend::selective_release(&gflag2[workrank+1], sizeof(bool));
+		}
+		if (workrank != 0) {
+			gflag2[workrank] = 1;
+			argo::backend::selective_release(&gflag2[workrank], sizeof(bool));
+		}
 		unlock = 0;
 	}
 }

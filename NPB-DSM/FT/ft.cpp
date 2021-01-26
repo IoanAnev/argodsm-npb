@@ -111,15 +111,20 @@ static dcomplex u1[NTOTAL];
 static int dims[3];
 #else
 static dcomplex (*sums)=(dcomplex*)malloc(sizeof(dcomplex)*(NITER_DEFAULT+1));
-static double (*twiddle)=(double*)malloc(sizeof(double)*(NTOTAL));
+// static double (*twiddle)=(double*)malloc(sizeof(double)*(NTOTAL));
 static dcomplex (*u)=(dcomplex*)malloc(sizeof(dcomplex)*(MAXDIM));
-static dcomplex (*u0)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
-static dcomplex (*u1)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
+// static dcomplex (*u0)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
+// static dcomplex (*u1)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
 static int (*dims)=(int*)malloc(sizeof(int)*(3));
 #endif
 static int niter;
+static int workrank, numtasks, nthreads;
 static boolean timers_enabled;
 static boolean debug;
+
+static dcomplex (*u0);
+static dcomplex (*u1);
+static double (*twiddle);
 
 /* function prototypes */
 static void cffts1(int is,
@@ -201,18 +206,58 @@ static void verify(int d1,
 		int nt,
 		boolean* verified,
 		char* class_npb);
+static void distribute(int& beg,
+		int& end,
+		const int& loop_size,
+		const int& beg_offset,
+		const int& less_equal);
 
 /* ft */
 int main(int argc, char **argv){
+	/*
+	 * -------------------------------------------------------------------------
+	 * initialize argodsm
+	 * -------------------------------------------------------------------------
+	 */
+	argo::init(15*1024*1024*1024UL);
+	/*
+	 * -------------------------------------------------------------------------
+	 * fetch workrank, number of nodes, and number of threads
+	 * -------------------------------------------------------------------------
+	 */ 
+	workrank = argo::node_id();
+	numtasks = argo::number_of_nodes();
+
+	#pragma omp parallel
+	{
+		#if defined(_OPENMP)
+			#pragma omp master
+			nthreads = omp_get_num_threads();
+		#endif /* _OPENMP */
+	}
+	/*
+	 * -------------------------------------------------------------------------
+	 * move global arrays allocation here, since this is a collective operation
+	 * -------------------------------------------------------------------------
+	 */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
-	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
+	if(workrank == 0){
+		printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
+	}
 #endif
+	u0=argo::conew_array<dcomplex>(NTOTAL);
+	u1=argo::conew_array<dcomplex>(NTOTAL);
+	twiddle=argo::conew_array<double>(NTOTAL);
+	/*
+	 * -------------------------------------------------------------------------
+	 * continue with the local allocations
+	 * -------------------------------------------------------------------------
+	 */
 	int i;	
 	int iter;
 	double total_time, mflops;
 	boolean verified;
 	char class_npb;
-
 	/*
 	 * ---------------------------------------------------------------------
 	 * run the entire problem once to make sure all data is touched. 
@@ -250,7 +295,7 @@ int main(int argc, char **argv){
 	fft_init(MAXDIM);
 
 	#pragma omp parallel private(iter) firstprivate(niter)
-    {
+    	{
 		if(timers_enabled==TRUE){
 			#pragma omp master
 				timer_stop(T_SETUP);
@@ -304,8 +349,9 @@ int main(int argc, char **argv){
 			}
 		}
 	} /* end parallel */
+	argo::barrier();
 	
-	verify(NX, NY, NZ, niter, &verified, &class_npb);
+	if (workrank == 0) { verify(NX, NY, NZ, niter, &verified, &class_npb); }
 
 	timer_stop(T_TOTAL);
 	total_time = timer_read(T_TOTAL);
@@ -318,29 +364,45 @@ int main(int argc, char **argv){
 	}else{
 		mflops = 0.0;
 	}
-	c_print_results((char*)"FT",
-			class_npb,
-			NX,
-			NY,
-			NZ,
-			niter,
-			total_time,
-			mflops,
-			(char*)"          floating point",
-			verified,
-			(char*)NPBVERSION,
-			(char*)COMPILETIME,
-			(char*)COMPILERVERSION,
-			(char*)LIBVERSION,
-			std::getenv("OMP_NUM_THREADS"),
-			(char*)CS1,
-			(char*)CS2,
-			(char*)CS3,
-			(char*)CS4,
-			(char*)CS5,
-			(char*)CS6,
-			(char*)CS7);
-	if(timers_enabled==TRUE){print_timers();}
+	if (workrank == 0) {
+		c_print_results((char*)"FT",
+				class_npb,
+				NX,
+				NY,
+				NZ,
+				niter,
+				total_time,
+				mflops,
+				(char*)"          floating point",
+				verified,
+				(char*)NPBVERSION,
+				(char*)COMPILETIME,
+				(char*)COMPILERVERSION,
+				(char*)LIBVERSION,
+				std::getenv("OMP_NUM_THREADS"),
+				(char*)CS1,
+				(char*)CS2,
+				(char*)CS3,
+				(char*)CS4,
+				(char*)CS5,
+				(char*)CS6,
+				(char*)CS7);
+		if(timers_enabled==TRUE){print_timers();}
+	}
+	/*
+	 * -------------------------------------------------------------------------
+	 * deallocate data structures
+	 * -------------------------------------------------------------------------
+	 */
+	argo::codelete_array(u0);
+	argo::codelete_array(u1);
+	argo::codelete_array(twiddle);
+	/*
+	 * -------------------------------------------------------------------------
+	 * finalize argodsm
+	 * -------------------------------------------------------------------------
+	 */
+	argo::finalize();
 
 	return 0;
 }
@@ -366,9 +428,12 @@ static void cffts1(int is,
 		#pragma omp master
 			timer_start(T_FFTX);
 	}
+
+	int beg, end;
+	distribute(beg, end, d3, 0, 0);
 	
 	#pragma omp for	
-	for(k=0; k<d3; k++){
+	for(k=beg; k<end; k++){
 		for(jj=0; jj<=d2-FFTBLOCK; jj+=FFTBLOCK){
 			for(j=0; j<FFTBLOCK; j++){
 				for(i=0; i<d1; i++){
@@ -411,8 +476,11 @@ static void cffts2(int is,
 			timer_start(T_FFTY);
 	}
 
+	int beg, end;
+	distribute(beg, end, d3, 0, 0);
+
 	#pragma omp for	
-	for(k=0; k<d3; k++){
+	for(k=beg; k<end; k++){
 		for(ii=0; ii<=d1-FFTBLOCK; ii+=FFTBLOCK){
 			for(j=0; j<d2; j++){
 				for(i=0; i<FFTBLOCK; i++){
@@ -455,8 +523,11 @@ static void cffts3(int is,
 			timer_start(T_FFTZ);
 	}
 
+	int beg, end;
+	distribute(beg, end, d2, 0, 0);
+
 	#pragma omp for
-	for(j=0; j<d2; j++){
+	for(j=beg; j<end; j++){
 		for(ii=0; ii<=d1-FFTBLOCK; ii+=FFTBLOCK){
 			for(k=0; k<d3; k++){
 				for(i=0; i<FFTBLOCK; i++){
@@ -559,10 +630,13 @@ static void checksum(int i,
 	#pragma omp barrier
 	#pragma omp single
 	{
-		chk = dcomplex_div2(chk, (double)(NTOTAL));
-		printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
-		sums[i] = chk;
+		if (workrank == 0){
+			chk = dcomplex_div2(chk, (double)(NTOTAL));
+			printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
+			sums[i] = chk;
+		}
 	}
+	argo::barrier(nthreads);
 }
 
 /*
@@ -578,6 +652,9 @@ static void compute_indexmap(void* pointer_twiddle,
 	int i, j, k, kk, kk2, jj, kj2, ii;
 	double ap;
 
+	int beg, end;
+	distribute(beg, end, d3, 0, 0);
+
 	/*
 	 * ---------------------------------------------------------------------
 	 * basically we want to convert the fortran indices 
@@ -590,7 +667,7 @@ static void compute_indexmap(void* pointer_twiddle,
 	 */
 	ap = - 4.0 * ALPHA * PI * PI;
 	#pragma omp parallel for private(i,j,kk,kk2,jj,kj2,ii)
-	for(k=0; k<d3; k++){
+	for(k=beg; k<end; k++){
 		kk = ((k+NZ/2) % NZ) - NZ/2;
 		kk2 = kk*kk;
 		for(j=0; j<d2; j++){
@@ -635,13 +712,16 @@ static void compute_initial_conditions(void* pointer_u0,
 		starts[k] = start;
 	}
 
+	int beg, end;
+	distribute(beg, end, dims[2], 0, 0);
+
 	/*
 	 * ---------------------------------------------------------------------
 	 * go through by z planes filling in one square at a time.
 	 * ---------------------------------------------------------------------
 	 */
 	#pragma omp parallel for private(k,j,x0)
-	for(k=0; k<dims[2]; k++){
+	for(k=beg; k<end; k++){
 		x0 = starts[k];
 		for(j=0; j<dims[1]; j++){			
 			vranlc(2*NX, &x0, A, (double*)&u0[k][j][0]);
@@ -664,9 +744,12 @@ static void evolve(void* pointer_u0,
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
 	double (*twiddle)[NY][NX] = (double(*)[NY][NX])pointer_twiddle;
 
+	int beg, end;
+	distribute(beg, end, d3, 0, 0);
+
 	int i, j, k;
 	#pragma omp for
-	for(k=0; k<d3; k++){
+	for(k=beg; k<end; k++){
 		for(j=0; j<d2; j++){
 			for(i=0; i<d1; i++){
 				u0[k][j][i] = dcomplex_mul2(u0[k][j][i], twiddle[k][j][i]);
@@ -674,6 +757,7 @@ static void evolve(void* pointer_u0,
 			}
 		}
 	}
+	argo::barrier(nthreads);
 }
 
 static void fft(int dir,
@@ -697,6 +781,7 @@ static void fft(int dir,
 		cffts2(1, dims[0], dims[1], dims[2], pointer_x1, pointer_x1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
+		argo::barrier(nthreads);
 		cffts3(1, dims[0], dims[1], dims[2], pointer_x1, pointer_x2,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
@@ -704,6 +789,7 @@ static void fft(int dir,
 		cffts3(-1, dims[0], dims[1], dims[2], pointer_x1, pointer_x1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
+		argo::barrier(nthreads);
 		cffts2(-1, dims[0], dims[1], dims[2], pointer_x1, pointer_x1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
@@ -711,6 +797,7 @@ static void fft(int dir,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
 	}
+	argo::barrier(nthreads);
 }
 
 /*
@@ -828,9 +915,12 @@ static void init_ui(void* pointer_u0,
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
 	double (*twiddle)[NY][NX] = (double(*)[NY][NX])pointer_twiddle;
 
+	int beg, end;
+	distribute(beg, end, d3, 0, 0);
+
 	int i, j, k;
 	#pragma omp parallel for private(i,j,k)
-	for(k=0; k<d3; k++){
+	for(k=beg; k<end; k++){
 		for(j=0; j<d2; j++){
 			for(i=0; i<d1; i++){
 				u0[k][j][i] = dcomplex_create(0.0, 0.0);
@@ -914,10 +1004,12 @@ static void setup(){
 
 	niter = NITER_DEFAULT;
 
-	printf("\n\n NAS Parallel Benchmarks 4.1 Parallel C++ version with OpenMP - FT Benchmark\n\n");
-	printf(" Size                : %4dx%4dx%4d\n", NX, NY, NZ);
-	printf(" Iterations                  :%7d\n", niter);
-	printf("\n");
+	if (workrank == 0){
+		printf("\n\n NAS Parallel Benchmarks 4.1 Parallel C++ version with OpenMP - FT Benchmark\n\n");
+		printf(" Size                : %4dx%4dx%4d\n", NX, NY, NZ);
+		printf(" Iterations                  :%7d\n", niter);
+		printf("\n");
+	}
 
 	dims[0] = NX;
 	dims[1] = NY;
@@ -1145,4 +1237,14 @@ static void verify(int d1,
 		}
 	}
 	printf(" class_npb = %c\n", *class_npb);
+}
+
+static void distribute(int& beg,
+		int& end,
+		const int& loop_size,
+		const int& beg_offset,
+    		const int& less_equal){
+	int chunk = loop_size / numtasks;
+	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
+	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }

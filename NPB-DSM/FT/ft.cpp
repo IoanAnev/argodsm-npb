@@ -17,6 +17,9 @@
  *
  * OpenMP version:
  *      Júnior Löff <loffjh@gmail.com>
+ * 
+ * ArgoDSM/OpenMP version:
+ *      Ioannis Anevlavis <iwananev@gmail.com>
  */
 
 #include "argo.hpp"
@@ -104,17 +107,11 @@
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static dcomplex sums[NITER_DEFAULT+1];
-static double twiddle[NTOTAL];
 static dcomplex u[MAXDIM];
-static dcomplex u0[NTOTAL];
-static dcomplex u1[NTOTAL];
-static int dims[3];
+=static int dims[3];
 #else
 static dcomplex (*sums)=(dcomplex*)malloc(sizeof(dcomplex)*(NITER_DEFAULT+1));
-// static double (*twiddle)=(double*)malloc(sizeof(double)*(NTOTAL));
 static dcomplex (*u)=(dcomplex*)malloc(sizeof(dcomplex)*(MAXDIM));
-// static dcomplex (*u0)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
-// static dcomplex (*u1)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
 static int (*dims)=(int*)malloc(sizeof(int)*(3));
 #endif
 static int niter;

@@ -121,7 +121,11 @@ static boolean debug;
 
 static dcomplex (*u0);
 static dcomplex (*u1);
+static dcomplex (*gchk);
 static double (*twiddle);
+
+static bool *lock_flag;
+static argo::globallock::global_tas_lock *lock;
 
 /* function prototypes */
 static void cffts1(int is,
@@ -245,6 +249,10 @@ int main(int argc, char **argv){
 	u0=argo::conew_array<dcomplex>(NTOTAL);
 	u1=argo::conew_array<dcomplex>(NTOTAL);
 	twiddle=argo::conew_array<double>(NTOTAL);
+	gchk=argo::conew_<dcomplex>(dcomplex_create(0.0, 0.0));
+
+	lock_flag=argo::conew_<bool>(false);
+	lock=new argo::globallock::global_tas_lock(lock_flag);
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -337,7 +345,6 @@ int main(int argc, char **argv){
 					timer_start(T_CHECKSUM);
 			}
 
-			#pragma omp barrier
 			checksum(iter, u1, dims[0], dims[1], dims[2]);
 
 			if(timers_enabled==TRUE){
@@ -394,6 +401,10 @@ int main(int argc, char **argv){
 	argo::codelete_array(u0);
 	argo::codelete_array(u1);
 	argo::codelete_array(twiddle);
+	
+	delete lock;
+	argo::codelete_(lock_flag);
+	argo::codelete_array(gchk);
 	/*
 	 * -------------------------------------------------------------------------
 	 * finalize argodsm
@@ -607,14 +618,23 @@ static void checksum(int i,
 
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
 	int j,q,r,s;
+	int beg, end;
 	dcomplex chk_worker = dcomplex_create(0.0, 0.0);
 	static dcomplex chk;
 
 	#pragma omp single
+	{
 		chk = dcomplex_create(0.0, 0.0);
+		if (workrank == 0) {
+			*gchk = dcomplex_create(0.0, 0.0);
+		}
+	}
+	argo::barrier(nthreads);
 
-	#pragma omp for
-	for(j=1; j<=1024; j++){
+	distribute(beg, end, 1024, 1, 1);
+
+	#pragma omp for nowait
+	for(j=beg; j<=end; j++){
 		q = j % NX;
 		r = (3*j) % NY;
 		s = (5*j) % NZ;
@@ -623,17 +643,24 @@ static void checksum(int i,
 
 	#pragma omp critical
 		chk = dcomplex_add(chk, chk_worker);
-	
 	#pragma omp barrier
-	#pragma omp single
+
+	#pragma omp master
 	{
-		if (workrank == 0){
-			chk = dcomplex_div2(chk, (double)(NTOTAL));
-			printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
-			sums[i] = chk;
-		}
+		lock->lock();
+		*gchk = dcomplex_add(*gchk, chk);
+		lock->unlock();
 	}
 	argo::barrier(nthreads);
+	
+	#pragma omp single
+	{
+		if (workrank == 0) {
+			*gchk = dcomplex_div2(*gchk, (double)(NTOTAL));
+			printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, gchk->real, gchk->imag);
+			sums[i] = *gchk;
+		}
+	}
 }
 
 /*

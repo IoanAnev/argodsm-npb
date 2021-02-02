@@ -12,9 +12,15 @@
  *      Júnior Löff <loffjh@gmail.com>
  */
 
+#include "npb-CPP.hpp"
+
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
+
+lock_barr_t argo_stats;
+double lock_t1, lock_t2;
+double barr_t1, barr_t2;
 
 /*****************************************************************/
 /******     C  _  P  R  I  N  T  _  R  E  S  U  L  T  S     ******/
@@ -121,4 +127,6 @@ void c_print_results(char* name,
 	printf("        dalvan.griebler; gabriell.araujo; junior.loff@edu.pucrs.br\n");
 	printf("----------------------------------------------------------------------\n");
 	printf("\n");
+
+	print_argo_stats();
 }

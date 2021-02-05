@@ -20,7 +20,7 @@
  *      Júnior Löff <loffjh@gmail.com>
  * 
  * ArgoDSM/OpenMP version:
- *      Ioannis Anevlavis <iwananev@gmail.com>
+ *      Ioannis Anevlavis <ioannis.anevlavis@etascale.com>
  */
 
 #include "argo.hpp"

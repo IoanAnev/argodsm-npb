@@ -353,7 +353,7 @@ int main(int argc, char **argv){
 			}
 		}
 	} /* end parallel */
-	argo_barrier();
+	argo::barrier();
 	
 	if (workrank == 0) { verify(NX, NY, NZ, niter, &verified, &class_npb); }
 
@@ -629,7 +629,7 @@ static void checksum(int i,
 			*gchk = dcomplex_create(0.0, 0.0);
 		}
 	}
-	argo_barrier(nthreads);
+	argo::barrier(nthreads);
 
 	distribute(beg, end, 1024, 1, 1);
 
@@ -647,11 +647,11 @@ static void checksum(int i,
 
 	#pragma omp master
 	{
-		argo_lock(lock);
+		lock->lock();
 		*gchk = dcomplex_add(*gchk, chk);
-		argo_unlock(lock);
+		lock->unlock();
 	}
-	argo_barrier(nthreads);
+	argo::barrier(nthreads);
 	
 	#pragma omp single
 	{
@@ -781,7 +781,7 @@ static void evolve(void* pointer_u0,
 			}
 		}
 	}
-	argo_barrier(nthreads);
+	argo::barrier(nthreads);
 }
 
 static void fft(int dir,
@@ -805,7 +805,7 @@ static void fft(int dir,
 		cffts2(1, dims[0], dims[1], dims[2], pointer_x1, pointer_x1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
-		argo_barrier(nthreads);
+		argo::barrier(nthreads);
 		cffts3(1, dims[0], dims[1], dims[2], pointer_x1, pointer_x2,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
@@ -813,7 +813,7 @@ static void fft(int dir,
 		cffts3(-1, dims[0], dims[1], dims[2], pointer_x1, pointer_x1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
-		argo_barrier(nthreads);
+		argo::barrier(nthreads);
 		cffts2(-1, dims[0], dims[1], dims[2], pointer_x1, pointer_x1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
@@ -821,7 +821,7 @@ static void fft(int dir,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y1,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
 	}
-	argo_barrier(nthreads);
+	argo::barrier(nthreads);
 }
 
 /*

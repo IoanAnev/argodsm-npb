@@ -280,14 +280,14 @@ int main(int argc, char **argv){
 		gc = gc + q[i];
 	}
 
-	argo_lock(lock);
+	lock->lock();
 	*gsx += sx;
 	*gsy += sy;
 	*ggc += gc;
 	for (i = 0; i <= NQ - 1; i++) gq[i] += q[i];
-	argo_unlock(lock);
+	lock->unlock();
 
-	argo_barrier();
+	argo::barrier();
 
 	timer_stop(0);
 	tm = timer_read(0);

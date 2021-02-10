@@ -377,7 +377,7 @@ int main(int argc, char **argv)
 			zeta  = 0.0;
 
 	} /* end parallel */
-	argo_barrier();
+	argo::barrier();
 
 	timer_stop(T_INIT);
 
@@ -430,7 +430,7 @@ int main(int argc, char **argv)
 				gtemps[workrank] = norm_temp11;
 				gtemps[workrank+numtasks] = norm_temp12;
 			}
-			argo_barrier(nthreads);
+			argo::barrier(nthreads);
 
 			#pragma omp single
 			{
@@ -455,7 +455,7 @@ int main(int argc, char **argv)
 			for (j = beg; j <= end; j++) {
 				x[j] = norm_temp12*z[j];
 			}
-			argo_barrier(nthreads);
+			argo::barrier(nthreads);
 		} /* end of main iter inv pow meth */
 	} /* end parallel */
 	timer_stop(T_BENCH);
@@ -604,7 +604,7 @@ static void conj_grad (int colidx[],
 		r[j] = x[j];
 		p[j] = r[j];
 	}
-	argo_barrier(nthreads);
+	argo::barrier(nthreads);
 
 	/*
 	 * --------------------------------------------------------------------
@@ -618,7 +618,7 @@ static void conj_grad (int colidx[],
 	}
 	#pragma omp master
 	gtemps[workrank] = rho;
-	argo_barrier(nthreads);
+	argo::barrier(nthreads);
 
 	#pragma omp single
 	for (j = 0; j < numtasks; j++)
@@ -674,7 +674,7 @@ static void conj_grad (int colidx[],
 		}
 		#pragma omp master
 		gtemps[workrank] = d;
-		argo_barrier(nthreads);
+		argo::barrier(nthreads);
 
 		#pragma omp single
 		for (j = 0; j < numtasks; j++)
@@ -701,7 +701,7 @@ static void conj_grad (int colidx[],
 			r[j] -= alpha*q[j];
 		}
 		/* why correctness fails for bind-all when this barrier is removed? */
-		argo_barrier(nthreads);
+		argo::barrier(nthreads);
 
 		/*
 		 * ---------------------------------------------------------------------
@@ -715,7 +715,7 @@ static void conj_grad (int colidx[],
 		}
 		#pragma omp master
 		gtemps[workrank] = rho;
-		argo_barrier(nthreads);
+		argo::barrier(nthreads);
 
 		#pragma omp single
 		for (j = 0; j < numtasks; j++)
@@ -739,7 +739,7 @@ static void conj_grad (int colidx[],
 		for (j = beg_col; j <= end_col; j++) {
 			p[j] = r[j] + beta*p[j];
 		}
-		argo_barrier(nthreads);
+		argo::barrier(nthreads);
 	} /* end of do cgit=1, cgitmax */
 
 	/*
@@ -773,7 +773,7 @@ static void conj_grad (int colidx[],
 	}
 	#pragma omp master
 	gtemps[workrank] = sum;
-	argo_barrier(nthreads);
+	argo::barrier(nthreads);
 
 	#pragma omp single
 	for (j = 0; j < numtasks; j++)

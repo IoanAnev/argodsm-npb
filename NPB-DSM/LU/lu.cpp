@@ -1040,7 +1040,7 @@ void erhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * xi-direction flux differences
@@ -1155,7 +1155,7 @@ void erhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * eta-direction flux differences
@@ -1270,7 +1270,7 @@ void erhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * zeta-direction flux differences
@@ -2090,7 +2090,7 @@ void l2norm(int nx0,
       			gsum[m] = 0.0;
     		}
   	}
-	argo::barrier(nthreads);
+	argo_barrier(nthreads);
 
   	distribute(beg, end, jend, jst, 0);
 
@@ -2119,15 +2119,15 @@ void l2norm(int nx0,
 
   	#pragma omp master
   	{
-    		lock->lock();
+    		argo_lock(lock);
 		gsum[0] += sum[0];
 		gsum[1] += sum[1];
 		gsum[2] += sum[2];
 		gsum[3] += sum[3];
 		gsum[4] += sum[4];
-    		lock->unlock();
+    		argo_unlock(lock);
   	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 
 	#pragma omp single  
 	for(m=0; m<5; m++){
@@ -2423,7 +2423,7 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	if(timeron){timer_start(T_RHSX);}
 	/*
 	 * ---------------------------------------------------------------------
@@ -2536,7 +2536,7 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	if(timeron){timer_stop(T_RHSX);}
 	if(timeron){timer_start(T_RHSY);}
 	/*
@@ -2656,7 +2656,7 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	if(timeron){timer_stop(T_RHSY);}
 	if(timeron){timer_start(T_RHSZ);}
 	/*
@@ -2778,7 +2778,7 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	if(timeron){timer_stop(T_RHSZ);}
 	if(timeron){timer_stop(T_RHS);}
 }
@@ -2814,7 +2814,7 @@ void setbv(){
       			}
     		}
   	}
-  	argo::barrier(nthreads);
+  	argo_barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * set the dependent variable values along the top and bottom faces
@@ -3110,7 +3110,7 @@ void ssor(int niter){
 			}
 		}
 	}
-  	argo::barrier();
+  	argo_barrier();
 	for(i=1;i<=T_LAST;i++){timer_clear(i);}
 
 	
@@ -3232,7 +3232,7 @@ void ssor(int niter){
 				}
 			}
 
-			argo::barrier(nthreads);
+			argo_barrier(nthreads);
 
 			for(k=nz-2; k>0; k--){
 				/*
@@ -3283,7 +3283,7 @@ void ssor(int niter){
 				}
 			}
 			
-			argo::barrier(nthreads);
+			argo_barrier(nthreads);
 
 			/*
 			 * ---------------------------------------------------------------------
@@ -3307,7 +3307,7 @@ void ssor(int niter){
 					}
 				}
 			}
-      			argo::barrier(nthreads);
+      			argo_barrier(nthreads);
 			if(timeron){
 				#pragma omp master
 					timer_stop(T_ADD);

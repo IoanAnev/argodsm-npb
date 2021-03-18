@@ -22,6 +22,7 @@
  */
 
 #include "argo.hpp"
+#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -80,8 +81,7 @@ static double *r;
 static double *gs;
 static double *gten;
 
-static bool *lock_flag;
-static argo::globallock::global_tas_lock *lock;
+static argo::globallock::cohort_lock *lock;
 
 /* function prototypes */
 static void bubble(void* pten, void* pj1, void* pj2, void* pj3, int m, int ind);
@@ -150,8 +150,7 @@ int main(int argc, char *argv[]){
 	 * -------------------------------------------------------------------------
 	 */
 	gs=argo::conew_<double>(0.0);
-	lock_flag=argo::conew_<bool>(false);
-	lock=new argo::globallock::global_tas_lock(lock_flag);
+	lock=new argo::globallock::cohort_lock();
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -528,7 +527,6 @@ int main(int argc, char *argv[]){
 	 */
 	delete lock;
 	argo::codelete_(gs);
-	argo::codelete_(lock_flag);
 
 	/*
 	 * -------------------------------------------------------------------------

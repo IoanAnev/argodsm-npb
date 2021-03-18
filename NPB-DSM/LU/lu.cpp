@@ -22,6 +22,7 @@
  */
 
 #include "argo.hpp"
+#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -123,8 +124,7 @@ static double *gsum;
 static bool *gflag;
 static bool *gflag2;
 
-static bool *lock_flag;
-static argo::globallock::global_tas_lock *lock;
+static argo::globallock::cohort_lock *lock;
 
 /* function prototypes */
 void blts(int nx,
@@ -254,8 +254,7 @@ int main(int argc, char* argv[]){
 	gflag=argo::conew_array<bool>(numtasks);
 	gflag2=argo::conew_array<bool>(numtasks);
 
-	lock_flag=argo::conew_<bool>(false);
-	lock=new argo::globallock::global_tas_lock(lock_flag);
+	lock=new argo::globallock::cohort_lock();
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -449,7 +448,6 @@ int main(int argc, char* argv[]){
 	 * -------------------------------------------------------------------------
 	 */
 	delete lock;
-	argo::codelete_(lock_flag);
 		
 	argo::codelete_array(gtv);
 	argo::codelete_array(gsum);

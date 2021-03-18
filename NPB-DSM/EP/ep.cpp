@@ -24,6 +24,7 @@
  */
 
 #include "argo.hpp"
+#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -67,8 +68,7 @@ static double *gsy;
 static double *ggc;
 static double (*gq);
 
-static bool *lock_flag;
-static argo::globallock::global_tas_lock *lock;
+static argo::globallock::cohort_lock *lock;
 
 static void distribute(int& beg,
 		int& end,
@@ -114,8 +114,7 @@ int main(int argc, char **argv){
 	ggc = argo::conew_<double>(0.0);
 	gq = argo::conew_array<double>(NQ);
 
-	lock_flag = argo::conew_<bool>(false);
-	lock = new argo::globallock::global_tas_lock(lock_flag);
+	lock = new argo::globallock::cohort_lock();
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -375,7 +374,6 @@ int main(int argc, char **argv){
 	 * -------------------------------------------------------------------------
 	 */
 	delete lock;
-	argo::codelete_(lock_flag);
 
 	argo::codelete_(gsx);
 	argo::codelete_(gsy);

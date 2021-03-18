@@ -32,7 +32,7 @@ ARGO_INSTALL_DIRECTORY=${HOME}/argodsm
 #---------------------------------------------------------------------------
 # This is the C compiler used for OpenMP programs
 #---------------------------------------------------------------------------
-CC = mpic++ -std=c++14 -L${ARGO_INSTALL_DIRECTORY}/build/lib -I${ARGO_INSTALL_DIRECTORY}/src
+CC = mpic++ -std=c++14 -L${ARGO_INSTALL_DIRECTORY}/build/lib -I${ARGO_INSTALL_DIRECTORY}/src -I${ARGO_INSTALL_DIRECTORY}/src/synchronization
 
 # This links C programs; usually the same as ${CC}
 CLINK	= $(CC)

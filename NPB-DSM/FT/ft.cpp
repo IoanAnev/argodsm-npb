@@ -23,6 +23,7 @@
  */
 
 #include "argo.hpp"
+#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -124,8 +125,7 @@ static dcomplex (*u1);
 static dcomplex (*gchk);
 static double (*twiddle);
 
-static bool *lock_flag;
-static argo::globallock::global_tas_lock *lock;
+static argo::globallock::cohort_lock *lock;
 
 /* function prototypes */
 static void cffts1(int is,
@@ -251,8 +251,7 @@ int main(int argc, char **argv){
 	twiddle=argo::conew_array<double>(NTOTAL);
 	gchk=argo::conew_<dcomplex>(dcomplex_create(0.0, 0.0));
 
-	lock_flag=argo::conew_<bool>(false);
-	lock=new argo::globallock::global_tas_lock(lock_flag);
+	lock=new argo::globallock::cohort_lock();
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -403,7 +402,6 @@ int main(int argc, char **argv){
 	argo::codelete_array(twiddle);
 	
 	delete lock;
-	argo::codelete_(lock_flag);
 	argo::codelete_array(gchk);
 	/*
 	 * -------------------------------------------------------------------------

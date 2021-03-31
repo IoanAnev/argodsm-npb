@@ -229,7 +229,7 @@ int main(int argc, char **argv){
 	/* initialize random number generator */
 	tran    = 314159265.0;
 	amult   = 1220703125.0;
-	zeta    = randlc( &tran, amult );
+	randlc( &tran, amult );
 
 	makea(naa, 
 			nzz, 
@@ -417,6 +417,7 @@ int main(int argc, char **argv){
 		}
 
 		if(it==1){printf("\n   iteration           ||r||                 zeta\n");}
+		#pragma oss task in(rnorm, zeta) firstprivate(it)
 		printf("    %5d       %20.14e%20.13e\n", it, rnorm, zeta);
 		
 		/* normalize z to obtain x */
@@ -594,7 +595,7 @@ static void conj_grad(int colidx[],
 		 * on the Cray t3d - overall speed of code is 1.5 times faster.
 		 */
 
-		#pragma oss task in(rho) out(d, rho0) /* OK */
+		#pragma oss task inout(rho) out(d, rho0) /* OK */
 		{
 			d = 0.0;
 			/*

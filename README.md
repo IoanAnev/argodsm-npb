@@ -46,6 +46,8 @@ The conventions we used in our porting can be found [here](notes-conventions.md)
 
 **NPB-DSM** - This directory contains the parallel version implemented with ArgoDSM/OpenMP.
 
+**NPB-OMPSS** - This directory contains the parallel version implemented with OmpSs-2(@Cluster).
+
 # The Five Kernels and Three Pseudo-applications
 
 Each directory is independent and contains its own implemented version of the kernels and pseudo-applications:

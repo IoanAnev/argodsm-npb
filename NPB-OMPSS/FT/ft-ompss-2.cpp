@@ -120,9 +120,9 @@ static dcomplex (*u0)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
 static dcomplex (*u1)=(dcomplex*)malloc(sizeof(dcomplex)*(NTOTAL));
 static int (*dims)=(int*)malloc(sizeof(int)*(3));
 #endif
-static int niter;
 static int BSIZE;
-static int nzz, nyy, nxx, ntot;
+static int niter;
+static int nzz, nyy, nxx;
 static boolean timers_enabled;
 static boolean debug;
 
@@ -227,7 +227,6 @@ int main(int argc, char **argv){
 	nzz = NZ;
 	nyy = NY;
 	nxx = NX;
-	ntot = NTOTAL;
 
 	if (argc > 1) {
 		BSIZE = atoi(argv[1]);
@@ -306,8 +305,6 @@ int main(int argc, char **argv){
 			timer_start(T_CHECKSUM);
 		}
 
-		#pragma oss task in(u1[0;ntot]) \
-			firstprivate(iter, dims)
 		checksum(iter, u1, dims[0], dims[1], dims[2]);
 
 		if(timers_enabled==TRUE){
@@ -316,10 +313,7 @@ int main(int argc, char **argv){
 	}
 	#pragma oss taskwait
 	
-	#pragma oss task in(sums[1:niter]) inout(verified) \
-			firstprivate(nxx, nyy, nzz, niter, class_npb)
 	verify(nxx, nyy, nzz, niter, &verified, &class_npb);
-	#pragma oss taskwait
 
 	timer_stop(T_TOTAL);
 	total_time = timer_read(T_TOTAL);
@@ -582,21 +576,26 @@ static void checksum(int i,
 		int d3){
 
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
-	int j,q,r,s;
-	static dcomplex chk;
-
-	chk = dcomplex_create(0.0, 0.0);
-
-	for(j=1; j<=1024; j++){
-		q = j % NX;
-		r = (3*j) % NY;
-		s = (5*j) % NZ;
-		chk = dcomplex_add(chk, u1[s][r][q]);
-	}
 	
-	chk = dcomplex_div2(chk, (double)(NTOTAL));
-	printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
-	sums[i] = chk;
+	int ntotal = NTOTAL;
+
+	#pragma oss task in(u1[0;d3][0;d2][0;d1]) out(sums[i]) \
+			firstprivate(i, nxx, nyy, nzz, ntotal)
+	{
+		int j,q,r,s;
+		dcomplex chk = dcomplex_create(0.0, 0.0);
+
+		for(j=1; j<=1024; j++){
+			q = j % nxx;
+			r = (3*j) % nyy;
+			s = (5*j) % nzz;
+			chk = dcomplex_add(chk, u1[s][r][q]);
+		}
+		
+		chk = dcomplex_div2(chk, (double)(ntotal));
+		printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
+		sums[i] = chk;
+	}
 }
 
 /*
@@ -659,8 +658,8 @@ static void compute_initial_conditions(void* pointer_u0,
 
 	int k, j;
 	int beg, end, chunk;
-	double x0, start, an, starts[NZ];
-	start = SEED;
+	double x0, an, start = SEED;
+	double starts[NZ];
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -672,7 +671,7 @@ static void compute_initial_conditions(void* pointer_u0,
 	ipow46(A, 2*NX*NY, &an);
 
 	starts[0] = start;
-	for(int k=1; k<dims[2]; k++){
+	for(int k=1; k<d3; k++){
 		randlc(&start, an);
 		starts[k] = start;
 	}
@@ -682,14 +681,14 @@ static void compute_initial_conditions(void* pointer_u0,
 	 * go through by z planes filling in one square at a time.
 	 * ---------------------------------------------------------------------
 	 */
-	for(k=0; k<dims[2]; k+=BSIZE){
-		task_chunk(beg, end, chunk, dims[2], k, BSIZE);
+	for(k=0; k<d3; k+=BSIZE){
+		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-		#pragma oss task out(u0[beg:end-1][0;dims[1]][0;2*nxx]) \
-				private(k, j, x0) firstprivate(starts, dims, nxx, beg, end)
+		#pragma oss task out(u0[beg:end-1][0;d2][0;d1]) \
+				private(k, j, x0) firstprivate(starts, d2, nxx, beg, end)
 		for(k=beg; k<end; k++){
 			x0 = starts[k];
-			for(j=0; j<dims[1]; j++){
+			for(j=0; j<d2; j++){
 				vranlc(2*nxx, &x0, A, (double*)&u0[k][j][0]);
 			}
 		}

@@ -24,6 +24,7 @@
 
 #include "omp.h"
 #include <algorithm>
+#include "../common/memory.hpp"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
 
@@ -159,46 +160,46 @@ int main(int argc, char **argv){
 	 * local array allocations
 	 * ---------------------------------------------------------------------
 	 */
-	colidx = (int*)nanos6_lmalloc(sizeof(int)*(NZ));
-	rowstr = (int*)nanos6_lmalloc(sizeof(int)*(NA+1));
-	iv     = (int*)nanos6_lmalloc(sizeof(int)*(NA));
-	arow   = (int*)nanos6_lmalloc(sizeof(int)*(NA));
-	acol   = (int*)nanos6_lmalloc(sizeof(int)*(NAZ));
-	aelt   = (double*)nanos6_lmalloc(sizeof(double)*(NAZ));
-	a      = (double*)nanos6_lmalloc(sizeof(double)*(NZ));
+	colidx = lmalloc<int>(NZ);
+	rowstr = lmalloc<int>(NA+1);
+	iv     = lmalloc<int>(NA);
+	arow   = lmalloc<int>(NA);
+	acol   = lmalloc<int>(NAZ);
+	aelt   = lmalloc<double>(NAZ);
+	a      = lmalloc<double>(NZ);
 	
 	/*
 	 * ---------------------------------------------------------------------
 	 * global array allocations
 	 * ---------------------------------------------------------------------
 	 */
-	x = (double*)nanos6_dmalloc(sizeof(double)*(NA+2), nanos6_equpart_distribution, 0, NULL);
-	z = (double*)nanos6_dmalloc(sizeof(double)*(NA+2), nanos6_equpart_distribution, 0, NULL);
-	p = (double*)nanos6_dmalloc(sizeof(double)*(NA+2), nanos6_equpart_distribution, 0, NULL);
-	q = (double*)nanos6_dmalloc(sizeof(double)*(NA+2), nanos6_equpart_distribution, 0, NULL);
-	r = (double*)nanos6_dmalloc(sizeof(double)*(NA+2), nanos6_equpart_distribution, 0, NULL);
+	x = dmalloc<double>(NA+2);
+	z = dmalloc<double>(NA+2);
+	p = dmalloc<double>(NA+2);
+	q = dmalloc<double>(NA+2);
+	r = dmalloc<double>(NA+2);
 
 	/*
 	 * ---------------------------------------------------------------------
 	 * global scalar allocations
 	 * ---------------------------------------------------------------------
 	 */
-	norm_temp1 = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	norm_temp2 = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	zeta       = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	rnorm      = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
+	norm_temp1 = dmalloc<double>(1);
+	norm_temp2 = dmalloc<double>(1);
+	zeta       = dmalloc<double>(1);
+	rnorm      = dmalloc<double>(1);
 
 	/*
 	 * --------------------------------------------------------------------
 	 * global scalar allocations for the conj_grad() function
 	 * --------------------------------------------------------------------
 	 */
-	d     = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	sum   = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	rho   = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	rho0  = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	alpha = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
-	beta  = (double*)nanos6_dmalloc(sizeof(double), nanos6_equpart_distribution, 0, NULL);
+	d     = dmalloc<double>(1);
+	sum   = dmalloc<double>(1);
+	rho   = dmalloc<double>(1);
+	rho0  = dmalloc<double>(1);
+	alpha = dmalloc<double>(1);
+	beta  = dmalloc<double>(1);
 
 	if (argc > 1) {
 		BSIZE = atoi(argv[1]);
@@ -553,46 +554,46 @@ int main(int argc, char **argv){
 	 * local array deallocations
 	 * ---------------------------------------------------------------------
 	 */
-	nanos6_lfree(colidx, sizeof(int)*(NZ));
-	nanos6_lfree(rowstr, sizeof(int)*(NA+1));
-	nanos6_lfree(iv, sizeof(int)*(NA));
-	nanos6_lfree(arow, sizeof(int)*(NA));
-	nanos6_lfree(acol, sizeof(int)*(NAZ));
-	nanos6_lfree(aelt, sizeof(double)*(NAZ));
-	nanos6_lfree(a, sizeof(double)*(NZ));
+	lfree<int>(colidx, NZ);
+	lfree<int>(rowstr, NA+1);
+	lfree<int>(iv, NA);
+	lfree<int>(arow, NA);
+	lfree<int>(acol, NAZ);
+	lfree<double>(aelt, NAZ);
+	lfree<double>(a, NZ);
 	
 	/*
 	 * ---------------------------------------------------------------------
 	 * global array deallocations
 	 * ---------------------------------------------------------------------
 	 */
-	nanos6_dfree(x, sizeof(double)*(NA+2));
-	nanos6_dfree(z, sizeof(double)*(NA+2));
-	nanos6_dfree(p, sizeof(double)*(NA+2));
-	nanos6_dfree(q, sizeof(double)*(NA+2));
-	nanos6_dfree(r, sizeof(double)*(NA+2));
+	dfree<double>(x, NA+2);
+	dfree<double>(z, NA+2);
+	dfree<double>(p, NA+2);
+	dfree<double>(q, NA+2);
+	dfree<double>(r, NA+2);
 
 	/*
 	 * ---------------------------------------------------------------------
 	 * global scalar deallocations
 	 * ---------------------------------------------------------------------
 	 */
-	nanos6_dfree(norm_temp1, sizeof(double));
-	nanos6_dfree(norm_temp2, sizeof(double));
-	nanos6_dfree(zeta, sizeof(double));
-	nanos6_dfree(rnorm, sizeof(double));
+	dfree<double>(norm_temp1, 1);
+	dfree<double>(norm_temp2, 1);
+	dfree<double>(zeta, 1);
+	dfree<double>(rnorm, 1);
 
 	/*
 	 * --------------------------------------------------------------------
 	 * global scalar deallocations for the conj_grad() function
 	 * --------------------------------------------------------------------
 	 */
-	nanos6_dfree(d, sizeof(double));
-	nanos6_dfree(sum, sizeof(double));
-	nanos6_dfree(rho, sizeof(double));
-	nanos6_dfree(rho0, sizeof(double));
-	nanos6_dfree(alpha, sizeof(double));
-	nanos6_dfree(beta, sizeof(double));
+	dfree<double>(d, 1);
+	dfree<double>(sum, 1);
+	dfree<double>(rho, 1);
+	dfree<double>(rho0, 1);
+	dfree<double>(alpha, 1);
+	dfree<double>(beta, 1);
 
 	return 0;
 }
@@ -722,7 +723,7 @@ static void conj_grad(int colidx[],
 		 * obtain alpha = rho / (p.q)
 		 * -------------------------------------------------------------------
 		 */
-		#pragma oss taskwait on(*rho, *d)
+		// #pragma oss taskwait on(*rho, *d)
 		#pragma oss task in(*rho0, *d) out(*alpha)
 			*alpha = *rho0 / *d;
 			
@@ -757,7 +758,7 @@ static void conj_grad(int colidx[],
 		 * obtain beta
 		 * ---------------------------------------------------------------------
 		 */	
-		#pragma oss taskwait on(*rho, *rho0)
+		// #pragma oss taskwait on(*rho, *rho0)
 		#pragma oss task in(*rho, *rho0) out(*beta)
 			*beta = *rho / *rho0;
 
@@ -819,7 +820,7 @@ static void conj_grad(int colidx[],
 			*sum += suml*suml;
 		}
 	}
-	#pragma oss taskwait on(*sum)
+	// #pragma oss taskwait on(*sum)
 	#pragma oss task in(*sum) out(*rnorm)
 		*rnorm = sqrt(*sum);
 }

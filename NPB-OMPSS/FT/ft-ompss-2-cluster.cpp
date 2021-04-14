@@ -23,6 +23,7 @@
  */
 
 #include "omp.h"
+#include "../common/memory.hpp"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
 
@@ -234,10 +235,10 @@ int main(int argc, char **argv){
 	 * global array allocations
 	 * ---------------------------------------------------------------------
 	 */
-	twiddle = (double*)nanos6_dmalloc(sizeof(double)*(NTOTAL), nanos6_equpart_distribution, 0, NULL);
-	u0      = (dcomplex*)nanos6_dmalloc(sizeof(dcomplex)*(NTOTAL), nanos6_equpart_distribution, 0, NULL);
-	u1      = (dcomplex*)nanos6_dmalloc(sizeof(dcomplex)*(NTOTAL), nanos6_equpart_distribution, 0, NULL);
-	sums    = (dcomplex*)nanos6_dmalloc(sizeof(dcomplex)*(NITER_DEFAULT+1), nanos6_equpart_distribution, 0, NULL);
+	twiddle = dmalloc<double>(NTOTAL);
+	u0      = dmalloc<dcomplex>(NTOTAL);
+	u1      = dmalloc<dcomplex>(NTOTAL);
+	sums    = dmalloc<dcomplex>(NITER_DEFAULT+1);
 
 	nzz = NZ;
 	nyy = NY;
@@ -372,10 +373,10 @@ int main(int argc, char **argv){
 	 * global array deallocations
 	 * ---------------------------------------------------------------------
 	 */
-	nanos6_dfree(twiddle, sizeof(double)*(NTOTAL));
-	nanos6_dfree(u0, sizeof(dcomplex)*(NTOTAL));
-	nanos6_dfree(u1, sizeof(dcomplex)*(NTOTAL));
-	nanos6_dfree(sums, sizeof(dcomplex)*(NITER_DEFAULT+1));
+	dfree<double>(twiddle, NTOTAL);
+	dfree<dcomplex>(u0, NTOTAL);
+	dfree<dcomplex>(u1, NTOTAL);
+	dfree<dcomplex>(sums, NITER_DEFAULT+1);
 	
 	return 0;
 }
@@ -732,7 +733,7 @@ static void compute_initial_conditions(void* pointer_u0,
 	int k, j;
 	int beg, end, chunk;
 	double x0, an, start = SEED;
-	double *starts = (double*)nanos6_lmalloc(sizeof(double)*NZ);
+	double *starts = lmalloc<double>(NZ);
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -768,7 +769,7 @@ static void compute_initial_conditions(void* pointer_u0,
 	}
 	#pragma oss taskwait
 	
-	nanos6_lfree(starts, sizeof(double)*NZ);
+	lfree<double>(starts, NZ);
 }
 
 /*

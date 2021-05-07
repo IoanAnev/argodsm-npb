@@ -27,12 +27,19 @@
 #---------------------------------------------------------------------------
 # This is the ArgoDSM installation directory
 #---------------------------------------------------------------------------
-ARGO_INSTALL_DIRECTORY=${HOME}/argodsm
+ARGO_INSTALL_DIRECTORY=${HOME}/argodsm/install
+
+#---------------------------------------------------------------------------
+# This is the include and lib ArgoDSM flags
+#---------------------------------------------------------------------------
+
+IDFLAGS = -I${ARGO_INSTALL_DIRECTORY}/include/argo -I${ARGO_INSTALL_DIRECTORY}/include/argo/synchronization
+LDFLAGS = -L${ARGO_INSTALL_DIRECTORY}/lib -Wl,-rpath=${ARGO_INSTALL_DIRECTORY}/lib
 
 #---------------------------------------------------------------------------
 # This is the C compiler used for OpenMP programs
 #---------------------------------------------------------------------------
-CC = mpic++ -std=c++14 -L${ARGO_INSTALL_DIRECTORY}/build/lib -I${ARGO_INSTALL_DIRECTORY}/src -I${ARGO_INSTALL_DIRECTORY}/src/synchronization
+CC = mpic++ -std=c++14 $(IDFLAGS) $(LDFLAGS)
 
 # This links C programs; usually the same as ${CC}
 CLINK	= $(CC)
@@ -40,7 +47,7 @@ CLINK	= $(CC)
 #---------------------------------------------------------------------------
 # These macros are passed to the linker 
 #---------------------------------------------------------------------------
-C_LIB  = -lm -largo -largobackend-mpi -lnuma -lrt -Wl,-rpath=${ARGO_INSTALL_DIRECTORY}/build/lib
+C_LIB  = -lm -largo -largobackend-mpi -lnuma -lrt
 
 #---------------------------------------------------------------------------
 # These macros are passed to the compiler 

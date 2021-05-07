@@ -662,6 +662,7 @@ static void conj_grad (int colidx[],
 		    	}
 			q[j] = sum;
 		}
+		argo::barrier(nthreads);
 		
 		/*
 		 * --------------------------------------------------------------------

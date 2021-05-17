@@ -8,8 +8,13 @@ include ../config/make.def
 EXECUTABLE=${BENCHMARK}-ompss-2
 
 ifdef version
-	ifeq "$(version)" "ompss-2-cluster"
-		EXECUTABLE=${BENCHMARK}-ompss-2-cluster
+	ifeq "$(version)" "ompss-2-cluster-strong"
+		EXECUTABLE=${BENCHMARK}-ompss-2-cluster-strong
+	endif
+endif
+ifdef version
+	ifeq "$(version)" "ompss-2-cluster-weak"
+		EXECUTABLE=${BENCHMARK}-ompss-2-cluster-weak
 	endif
 endif
 

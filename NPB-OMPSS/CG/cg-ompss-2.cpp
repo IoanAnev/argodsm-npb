@@ -153,7 +153,6 @@ int main(int argc, char **argv){
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
-	int i, j, k, it;
 	int beg, end, chunk;
 	double zeta;
 	double rnorm;
@@ -171,7 +170,7 @@ int main(int argc, char **argv){
 
 	char *t_names[T_LAST];
 
-	for(i=0; i<T_LAST; i++){
+	for(int i=0; i<T_LAST; i++){
 		timer_clear(i);
 	}
 
@@ -255,35 +254,37 @@ int main(int argc, char **argv){
 	 * to local, i.e., (0 --> lastcol-firstcol)
 	 * ---------------------------------------------------------------------
 	 */
-	for(j = 0; j < NA; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA, j, BSIZE);
 		int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 
-		#pragma oss task inout(colidx[beg_row:end_row-1]) \
-				private(k) firstprivate(beg_row, end_row, firstcol)
-		for(k = beg_row; k < end_row; k++){
+		#pragma oss task inout(colidx[beg_row:end_row-1])	\
+				 firstprivate(beg_row, end_row, firstcol)
+		for(int k = beg_row; k < end_row; k++){
 			colidx[k] -= firstcol;
 		}
 	}
 
 	/* set starting vector to (1, 1, .... 1) */
-	for(j = 0; j < NA+1; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA+1; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA+1, j, BSIZE);
 
-		#pragma oss task out(x[beg:end-1]) \
-				private(k) firstprivate(beg, end)
-		for (k = beg; k < end; k++){
+		#pragma oss task out(x[beg:end-1]) 	\
+				 firstprivate(beg, end)
+		for (int k = beg; k < end; k++){
 			x[k] = 1.0;
 		}
 	}
 
-	for(j = 0; j < NA; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-		#pragma oss task out(q[beg:end-1], z[beg:end-1], \
-				r[beg:end-1], p[beg:end-1]) \
-				private(k) firstprivate(beg, end)
-		for (k = beg; k < end; k++){
+		#pragma oss task out(q[beg:end-1],	\
+				     z[beg:end-1], 	\
+				     r[beg:end-1],	\
+				     p[beg:end-1]) 	\
+				 firstprivate(beg, end)
+		for (int k = beg; k < end; k++){
 			q[k] = 0.0;
 			z[k] = 0.0;
 			r[k] = 0.0;
@@ -300,7 +301,7 @@ int main(int argc, char **argv){
 	 * do one iteration untimed to init all code and data page tables
 	 * ----> (then reinit, start timing, to niter its)
 	 * -------------------------------------------------------------------*/
-	for(it = 1; it <= 1; it++){
+	for(int it = 1; it <= 1; it++){
 		/* the call to the conjugate gradient routine */
 		conj_grad(colidx, rowstr, x, z, a, p, q, r, &rnorm);
 		
@@ -318,13 +319,15 @@ int main(int argc, char **argv){
 		 * so, first: (z.z)
 		 * --------------------------------------------------------------------
 		 */
-		for(j = 0; j < NA; j += BSIZE){ /* OK */
+		for(int j = 0; j < NA; j += BSIZE){ /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-			#pragma oss task in(x[beg:end-1], z[beg:end-1]) \
-					concurrent(norm_temp1, norm_temp2) \
-					private(k) firstprivate(beg, end)
-			for (k = beg; k < end; k++){
+			#pragma oss task in(x[beg:end-1],	\
+					    z[beg:end-1])	\
+					 concurrent(norm_temp1,	\
+						    norm_temp2) \
+					 firstprivate(beg, end)
+			for (int k = beg; k < end; k++){
 				#pragma oss critical
 				{
 					norm_temp1 += x[k] * z[k];
@@ -337,24 +340,25 @@ int main(int argc, char **argv){
 			norm_temp2 = 1.0 / sqrt(norm_temp2);
 
 		/* normalize z to obtain x */
-		for(j = 0; j < NA; j += BSIZE){ /* OK */
+		for(int j = 0; j < NA; j += BSIZE){ /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-			#pragma oss task in(z[beg:end-1], norm_temp2) out(x[beg:end-1]) \
-					private(k) firstprivate(beg, end)
-			for (k = beg; k < end; k++){
+			#pragma oss task in(z[beg:end-1], norm_temp2)	\
+					 out(x[beg:end-1]) 		\
+					 firstprivate(beg, end)
+			for (int k = beg; k < end; k++){
 				x[k] = norm_temp2 * z[k];
 			}
 		}
 	} /* end of do one iteration untimed */
 
 	/* set starting vector to (1, 1, .... 1) */
-	for(j = 0; j < NA+1; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA+1; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA+1, j, BSIZE);
 
-		#pragma oss task out(x[beg:end-1]) \
-				private(k) firstprivate(beg, end)
-		for (k = beg; k < end; k++){
+		#pragma oss task out(x[beg:end-1])	\
+				 firstprivate(beg, end)
+		for (int k = beg; k < end; k++){
 			x[k] = 1.0;
 		}
 	}
@@ -375,7 +379,7 @@ int main(int argc, char **argv){
 	 * ---->
 	 * --------------------------------------------------------------------
 	 */
-	for(it = 1; it <= NITER; it++){
+	for(int it = 1; it <= NITER; it++){
 		/* the call to the conjugate gradient routine */
 		if(timeron){timer_start(T_CONJ_GRAD);}
 		conj_grad(colidx, rowstr, x, z, a, p, q, r, &rnorm);
@@ -395,13 +399,15 @@ int main(int argc, char **argv){
 		 * so, first: (z.z)
 		 * --------------------------------------------------------------------
 		 */
-		for(j = 0; j < NA; j += BSIZE){ /* OK */
+		for(int j = 0; j < NA; j += BSIZE){ /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-			#pragma oss task in(x[beg:end-1], z[beg:end-1]) \
-					concurrent(norm_temp1, norm_temp2) \
-					private(k) firstprivate(beg, end)
-			for (k = beg; k < end; k++){
+			#pragma oss task in(x[beg:end-1],	\
+					    z[beg:end-1])	\
+					 concurrent(norm_temp1,	\
+						    norm_temp2) \
+					 firstprivate(beg, end)
+			for (int k = beg; k < end; k++){
 				#pragma oss critical
 				{
 					norm_temp1 += x[k] * z[k];
@@ -421,12 +427,13 @@ int main(int argc, char **argv){
 		printf("    %5d       %20.14e%20.13e\n", it, rnorm, zeta);
 		
 		/* normalize z to obtain x */
-		for(j = 0; j < NA; j += BSIZE){ /* OK */
+		for(int j = 0; j < NA; j += BSIZE){ /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-			#pragma oss task in(z[beg:end-1], norm_temp2) out(x[beg:end-1]) \
-					private(k) firstprivate(beg, end)
-			for (k = beg; k < end; k++){
+			#pragma oss task in(z[beg:end-1], norm_temp2)	\
+					 out(x[beg:end-1])		\
+					 firstprivate(beg, end)
+			for (int k = beg; k < end; k++){
 				x[k] = norm_temp2 * z[k];
 			}
 		}
@@ -503,7 +510,7 @@ int main(int argc, char **argv){
 		tmax = timer_read(T_BENCH);
 		if(tmax == 0.0){tmax = 1.0;}
 		printf("  SECTION   Time (secs)\n");
-		for(i = 0; i < T_LAST; i++){
+		for(int i = 0; i < T_LAST; i++){
 			t = timer_read(i);
 			if(i == T_INIT){
 				printf("  %8s:%9.3f\n", t_names[i], t);
@@ -535,10 +542,9 @@ static void conj_grad(int colidx[],
 		double q[],
 		double r[],
 		double* rnorm){
-	int j, k;
 	int cgit, cgitmax;
 	int beg, end, chunk;
-	double alpha, beta, suml;
+	double alpha, beta;
 	static double d, sum, rho, rho0;
 
 	cgitmax = 25;
@@ -547,14 +553,18 @@ static void conj_grad(int colidx[],
 		rho = 0.0;
 		sum = 0.0;
 	}
+
 	/* initialize the CG algorithm */
-	for(j = 0; j < NA+1; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA+1; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA+1, j, BSIZE);
 
-		#pragma oss task in(x[beg:end-1]) inout(r[beg:end-1]) \
-				out(q[beg:end-1], z[beg:end-1], p[beg:end-1]) \
-				private(k) firstprivate(beg, end)
-		for (k = beg; k < end; k++){
+		#pragma oss task in(x[beg:end-1])	\
+				 inout(r[beg:end-1])	\
+				 out(q[beg:end-1],	\
+				     z[beg:end-1],	\
+				     p[beg:end-1]) 	\
+				 firstprivate(beg, end)
+		for (int k = beg; k < end; k++){
 			q[k] = 0.0;
 			z[k] = 0.0;
 			r[k] = x[k];
@@ -568,12 +578,13 @@ static void conj_grad(int colidx[],
 	 * now, obtain the norm of r: First, sum squares of r elements locally...
 	 * --------------------------------------------------------------------
 	 */
-	for(j = 0; j < NA; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-		#pragma oss task in(r[beg:end-1]) concurrent(rho) \
-				private(k) firstprivate(beg, end)
-		for (k = beg; k < end; k++){
+		#pragma oss task in(r[beg:end-1])	\
+				 concurrent(rho) 	\
+				 firstprivate(beg, end)
+		for (int k = beg; k < end; k++){
 			#pragma oss atomic
 				rho += r[k]*r[k];
 		}
@@ -607,7 +618,7 @@ static void conj_grad(int colidx[],
 			rho = 0.0;
 		}
 
-		for(j = 0; j < NA; j += BSIZE){ /* OK */
+		for(int j = 0; j < NA; j += BSIZE){ /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 			int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 			
@@ -615,12 +626,15 @@ static void conj_grad(int colidx[],
 			int beg_col = *std::min_element(colidx+beg_row, colidx+end_row);
 			int end_col = *std::max_element(colidx+beg_row, colidx+end_row);
 			
-			#pragma oss task in(rowstr[beg_row:end_row], a[beg_row:end_row-1], \
-					colidx[beg_row:end_row-1], p[beg_col:end_col]) \
-					out(q[beg:end-1]) private(suml, j, k) firstprivate(beg, end)
-			for (j = beg; j < end; j++){
-				suml = 0.0;
-				for(k = rowstr[j]; k < rowstr[j+1]; k++){
+			#pragma oss task in(rowstr[beg_row:end_row],	\
+					    colidx[beg_row:end_row-1],	\
+					    a[beg_row:end_row-1],	\
+					    p[beg_col:end_col])		\
+					 out(q[beg:end-1])		\
+					 firstprivate(beg, end)
+			for (int j = beg; j < end; j++){
+				double suml = 0.0;
+				for(int k = rowstr[j]; k < rowstr[j+1]; k++){
 					suml += a[k]*p[colidx[k]];
 				}
 				q[j] = suml;
@@ -632,12 +646,14 @@ static void conj_grad(int colidx[],
 		 * obtain p.q
 		 * --------------------------------------------------------------------
 		 */
-		for (j = 0; j < NA; j += BSIZE) { /* OK */
+		for (int j = 0; j < NA; j += BSIZE) { /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-			#pragma oss task in(p[beg:end-1], q[beg:end-1]) concurrent(d) \
-					private(k) firstprivate(beg, end)
-			for (k = beg; k < end; k++){
+			#pragma oss task in(p[beg:end-1],	\
+					    q[beg:end-1])	\
+					 concurrent(d)		\
+					 firstprivate(beg, end)
+			for (int k = beg; k < end; k++){
 				#pragma oss atomic
 					d += p[k]*q[k];
 			}
@@ -657,14 +673,16 @@ static void conj_grad(int colidx[],
 		 * and    r = r - alpha*q
 		 * ---------------------------------------------------------------------
 		 */
-		for(j = 0; j < NA; j += BSIZE){ /* OK */
+		for(int j = 0; j < NA; j += BSIZE){ /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-			#pragma oss task in(p[beg:end-1], q[beg:end-1], alpha) \
-					inout(z[beg:end-1], r[beg:end-1]) \
-					concurrent(rho) private(k) \
-					firstprivate(beg, end)
-			for (k = beg; k < end; k++){
+			#pragma oss task in(p[beg:end-1],		\
+					    q[beg:end-1], alpha)	\
+					 inout(z[beg:end-1],		\
+					       r[beg:end-1])		\
+					 concurrent(rho)		\
+					 firstprivate(beg, end)
+			for (int k = beg; k < end; k++){
 				z[k] += alpha*p[k];
 				r[k] -= alpha*q[k];
 
@@ -692,12 +710,13 @@ static void conj_grad(int colidx[],
 		 * p = r + beta*p
 		 * ---------------------------------------------------------------------
 		 */
-		for(j = 0; j < NA; j += BSIZE){ /* OK */
+		for(int j = 0; j < NA; j += BSIZE){ /* OK */
 			task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-			#pragma oss task in(r[beg:end-1], beta) inout(p[beg:end-1]) \
-					private(k) firstprivate(beg, end)
-			for (k = beg; k < end; k++){
+			#pragma oss task in(r[beg:end-1], beta)	\
+					 inout(p[beg:end-1])	\
+					 firstprivate(beg, end)
+			for (int k = beg; k < end; k++){
 				p[k] = r[k] + beta*p[k];
 			}
 		}
@@ -710,7 +729,7 @@ static void conj_grad(int colidx[],
 	 * the partition submatrix-vector multiply
 	 * ---------------------------------------------------------------------
 	 */
-	for(j = 0; j < NA; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA, j, BSIZE);
 		int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 		
@@ -718,12 +737,15 @@ static void conj_grad(int colidx[],
 		int beg_col = *std::min_element(colidx+beg_row, colidx+end_row);
 		int end_col = *std::max_element(colidx+beg_row, colidx+end_row);
 
-		#pragma oss task in(rowstr[beg_row:end_row], a[beg_row:end_row-1], \
-				colidx[beg_row:end_row-1], z[beg_col:end_col]) \
-				out(r[beg:end-1]) private(suml, j, k) firstprivate(beg, end)
-		for (j = beg; j < end; j++){
-			suml = 0.0;
-			for(k = rowstr[j]; k < rowstr[j+1]; k++){
+		#pragma oss task in(rowstr[beg_row:end_row],	\
+				    colidx[beg_row:end_row-1],	\
+				    a[beg_row:end_row-1],	\
+				    z[beg_col:end_col])		\
+				 out(r[beg:end-1])		\
+				 firstprivate(beg, end)
+		for (int j = beg; j < end; j++){
+			double suml = 0.0;
+			for(int k = rowstr[j]; k < rowstr[j+1]; k++){
 				suml += a[k]*z[colidx[k]];
 			}
 			r[j] = suml;
@@ -735,14 +757,15 @@ static void conj_grad(int colidx[],
 	 * at this point, r contains A.z
 	 * ---------------------------------------------------------------------
 	 */
-	for(j = 0; j < NA; j += BSIZE){ /* OK */
+	for(int j = 0; j < NA; j += BSIZE){ /* OK */
 		task_chunk(beg, end, chunk, NA, j, BSIZE);
 
-		#pragma oss task in(x[beg:end-1], r[beg:end-1]) \
-				concurrent(sum) private(suml, k) \
-				firstprivate(beg, end)
-		for (k = beg; k < end; k++){
-			suml = x[k] - r[k];
+		#pragma oss task in(x[beg:end-1],	\
+				    r[beg:end-1])	\
+				 concurrent(sum)	\
+				 firstprivate(beg, end)
+		for (int k = beg; k < end; k++){
+			double suml = x[k] - r[k];
 			#pragma oss atomic
 				sum += suml*suml;
 		}

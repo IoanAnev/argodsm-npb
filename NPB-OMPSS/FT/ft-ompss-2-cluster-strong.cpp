@@ -105,14 +105,6 @@
 #define T_MAX 8
 #define BSIZE_UNIT 64
 
-/**
- * @brief: sub-tasking for cffts1/2/3 functions.
- * @note : makes use of weak dependency clauses.
- *      0: to disable
- *      1: to enable
- */
-#define ENABLE_SUBTASKS 0
-
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static int dims[3];
@@ -429,39 +421,26 @@ static void cffts1(int is,
 	for(k=0; k<d3; k+=BSIZE){
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-#if ENABLE_SUBTASKS != 0
-		#pragma oss task weakin(x[beg:end-1][0;d2][0;d1]) weakout(xout[beg:end-1][0;d2][0;d1]) \
-				private(k, j, i) firstprivate(d2, d1, fftblock, is, logd1, beg, end)
-#else
 		#pragma oss task in(x[beg:end-1][0;d2][0;d1]) out(xout[beg:end-1][0;d2][0;d1]) \
 				private(k, j, i) firstprivate(d2, d1, fftblock, is, logd1, beg, end)
-#endif
 		for(k=beg; k<end; k++){
 			for(j=0; j<=d2-fftblock; j+=fftblock){
-#if ENABLE_SUBTASKS != 0
-				#pragma oss task in(x[k][j;fftblock][0;d1]) out(xout[k][j;fftblock][0;d1]) \
-						private(i) firstprivate(j, k, d1, fftblock, is, logd1)
-				{
-#endif
-					dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
-					dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
+				dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
+				dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
 
-					for(int jj=0; jj<fftblock; jj++){
-						for(i=0; i<d1; i++){
-							y1_fft[i][jj] = x[k][j+jj][i];
-						}
+				for(int jj=0; jj<fftblock; jj++){
+					for(i=0; i<d1; i++){
+						y1_fft[i][jj] = x[k][j+jj][i];
 					}
-					
-					cfftz(is, logd1, d1, y1_fft, y2_fft);
-					
-					for(int jj=0; jj<fftblock; jj++){
-						for(i=0; i<d1; i++){
-							xout[k][j+jj][i] = y1_fft[i][jj];
-						}
-					}
-#if ENABLE_SUBTASKS != 0
 				}
-#endif
+				
+				cfftz(is, logd1, d1, y1_fft, y2_fft);
+				
+				for(int jj=0; jj<fftblock; jj++){
+					for(i=0; i<d1; i++){
+						xout[k][j+jj][i] = y1_fft[i][jj];
+					}
+				}
 			}
 		}
 	}
@@ -496,39 +475,26 @@ static void cffts2(int is,
 	for(k=0; k<d3; k+=BSIZE){
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-#if ENABLE_SUBTASKS != 0
-		#pragma oss task weakin(x[beg:end-1][0;d2][0;d1]) weakout(xout[beg:end-1][0;d2][0;d1]) \
-				private(k, j, i) firstprivate(d1, d2, fftblock, is, logd2, beg, end)
-#else
 		#pragma oss task in(x[beg:end-1][0;d2][0;d1]) out(xout[beg:end-1][0;d2][0;d1]) \
 				private(k, j, i) firstprivate(d1, d2, fftblock, is, logd2, beg, end)
-#endif
 		for(k=beg; k<end; k++){
 			for(i=0; i<=d1-fftblock; i+=fftblock){
-#if ENABLE_SUBTASKS != 0
-				#pragma oss task in(x[k][0;d2][i;fftblock]) out(xout[k][0;d2][i;fftblock]) \
-						private(j) firstprivate(i, k, d2, fftblock, is, logd2)
-				{
-#endif
-					dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
-					dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
+				dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
+				dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
 
-					for(j=0; j<d2; j++){
-						for(int ii=0; ii<fftblock; ii++){
-							y1_fft[j][ii] = x[k][j][i+ii];
-						}
+				for(j=0; j<d2; j++){
+					for(int ii=0; ii<fftblock; ii++){
+						y1_fft[j][ii] = x[k][j][i+ii];
 					}
-					
-					cfftz(is, logd2, d2, y1_fft, y2_fft);
-					
-					for(j=0; j<d2; j++){
-						for(int ii=0; ii<fftblock; ii++){
-							xout[k][j][i+ii] = y1_fft[j][ii];
-						}
-					}
-#if ENABLE_SUBTASKS != 0
 				}
-#endif
+				
+				cfftz(is, logd2, d2, y1_fft, y2_fft);
+				
+				for(j=0; j<d2; j++){
+					for(int ii=0; ii<fftblock; ii++){
+						xout[k][j][i+ii] = y1_fft[j][ii];
+					}
+				}
 			}
 		}
 	}
@@ -563,39 +529,26 @@ static void cffts3(int is,
 	for(j=0; j<d2; j+=BSIZE){
 		task_chunk(beg, end, chunk, d2, j, BSIZE);
 
-#if ENABLE_SUBTASKS != 0
-		#pragma oss task weakin(x[0;d3][beg:end-1][0;d1]) weakout(xout[0;d3][beg:end-1][0;d1]) \
-				private(k, j, i) firstprivate(d1, d3, fftblock, is, logd3, beg, end)
-#else
 		#pragma oss task in(x[0;d3][beg:end-1][0;d1]) out(xout[0;d3][beg:end-1][0;d1]) \
 				private(k, j, i) firstprivate(d1, d3, fftblock, is, logd3, beg, end)
-#endif
 		for(j=beg; j<end; j++){
 			for(i=0; i<=d1-fftblock; i+=fftblock){
-#if ENABLE_SUBTASKS != 0
-				#pragma oss task in(x[0;d3][j][i;fftblock]) out(xout[0;d3][j][i;fftblock]) \
-						private(k) firstprivate(i, j, d3, fftblock, is, logd3)
-				{
-#endif
-					dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
-					dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
+				dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
+				dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
 
-					for(k=0; k<d3; k++){
-						for(int ii=0; ii<fftblock; ii++){
-							y1_fft[k][ii] = x[k][j][i+ii];
-						}
+				for(k=0; k<d3; k++){
+					for(int ii=0; ii<fftblock; ii++){
+						y1_fft[k][ii] = x[k][j][i+ii];
 					}
-					
-					cfftz(is, logd3, d3, y1_fft, y2_fft);
-					
-					for(k=0; k<d3; k++){
-						for(int ii=0; ii<fftblock; ii++){
-							xout[k][j][i+ii] = y1_fft[k][ii];
-						}
-					}
-#if ENABLE_SUBTASKS != 0
 				}
-#endif
+				
+				cfftz(is, logd3, d3, y1_fft, y2_fft);
+				
+				for(k=0; k<d3; k++){
+					for(int ii=0; ii<fftblock; ii++){
+						xout[k][j][i+ii] = y1_fft[k][ii];
+					}
+				}
 			}
 		}
 	}

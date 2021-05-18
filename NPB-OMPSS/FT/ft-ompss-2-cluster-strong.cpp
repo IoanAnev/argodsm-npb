@@ -22,7 +22,6 @@
  *      Ioannis Anevlavis <ioannis.anevlavis@etascale.com>
  */
 
-#include "omp.h"
 #include "../common/memory.hpp"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -406,38 +405,33 @@ static void cffts1(int is,
 	dcomplex (*x)[NY][NX] = (dcomplex(*)[NY][NX])pointer_x;
 	dcomplex (*xout)[NY][NX] = (dcomplex(*)[NY][NX])pointer_xout;
 
-	int logd1;
-	int i, j, k, jj;
-	int beg, end, chunk;
-	int fftblock = FFTBLOCK;
-
-	logd1 = ilog2(d1);
-
-	
 	if(timers_enabled){
 		timer_start(T_FFTX);
 	}
 	
-	for(k=0; k<d3; k+=BSIZE){
+	for(int k=0; k<d3; k+=BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-		#pragma oss task in(x[beg:end-1][0;d2][0;d1]) out(xout[beg:end-1][0;d2][0;d1]) \
-				private(k, j, i) firstprivate(d2, d1, fftblock, is, logd1, beg, end)
-		for(k=beg; k<end; k++){
-			for(j=0; j<=d2-fftblock; j+=fftblock){
+		#pragma oss task in(x[beg:end-1][0;d2][0;d1])		\
+				 out(xout[beg:end-1][0;d2][0;d1])	\
+				 firstprivate(beg, end, is, d2, d1)
+		for(int k=beg; k<end; k++){
+			for(int j=0; j<=d2-FFTBLOCK; j+=FFTBLOCK){
 				dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
 				dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
 
-				for(int jj=0; jj<fftblock; jj++){
-					for(i=0; i<d1; i++){
+				for(int jj=0; jj<FFTBLOCK; jj++){
+					for(int i=0; i<d1; i++){
 						y1_fft[i][jj] = x[k][j+jj][i];
 					}
 				}
 				
+				static const int logd1 = ilog2(d1);
 				cfftz(is, logd1, d1, y1_fft, y2_fft);
 				
-				for(int jj=0; jj<fftblock; jj++){
-					for(i=0; i<d1; i++){
+				for(int jj=0; jj<FFTBLOCK; jj++){
+					for(int i=0; i<d1; i++){
 						xout[k][j+jj][i] = y1_fft[i][jj];
 					}
 				}
@@ -461,37 +455,33 @@ static void cffts2(int is,
 	dcomplex (*x)[NY][NX] = (dcomplex(*)[NY][NX])pointer_x;
 	dcomplex (*xout)[NY][NX] = (dcomplex(*)[NY][NX])pointer_xout;
 
-	int logd2;
-	int i, j, k, ii;
-	int beg, end, chunk;
-	int fftblock = FFTBLOCK;
-
-	logd2 = ilog2(d2);
-
 	if(timers_enabled){
 		timer_start(T_FFTY);
 	}
 
-	for(k=0; k<d3; k+=BSIZE){
+	for(int k=0; k<d3; k+=BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-		#pragma oss task in(x[beg:end-1][0;d2][0;d1]) out(xout[beg:end-1][0;d2][0;d1]) \
-				private(k, j, i) firstprivate(d1, d2, fftblock, is, logd2, beg, end)
-		for(k=beg; k<end; k++){
-			for(i=0; i<=d1-fftblock; i+=fftblock){
+		#pragma oss task in(x[beg:end-1][0;d2][0;d1])		\
+				 out(xout[beg:end-1][0;d2][0;d1])	\
+				 firstprivate(beg, end, is, d2, d1)
+		for(int k=beg; k<end; k++){
+			for(int i=0; i<=d1-FFTBLOCK; i+=FFTBLOCK){
 				dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
 				dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
 
-				for(j=0; j<d2; j++){
-					for(int ii=0; ii<fftblock; ii++){
+				for(int j=0; j<d2; j++){
+					for(int ii=0; ii<FFTBLOCK; ii++){
 						y1_fft[j][ii] = x[k][j][i+ii];
 					}
 				}
 				
+				static const int logd2 = ilog2(d2);
 				cfftz(is, logd2, d2, y1_fft, y2_fft);
 				
-				for(j=0; j<d2; j++){
-					for(int ii=0; ii<fftblock; ii++){
+				for(int j=0; j<d2; j++){
+					for(int ii=0; ii<FFTBLOCK; ii++){
 						xout[k][j][i+ii] = y1_fft[j][ii];
 					}
 				}
@@ -515,37 +505,33 @@ static void cffts3(int is,
 	dcomplex (*x)[NY][NX] = (dcomplex(*)[NY][NX])pointer_x;
 	dcomplex (*xout)[NY][NX] = (dcomplex(*)[NY][NX])pointer_xout;
 
-	int logd3;
-	int i, j, k, ii;
-	int beg, end, chunk;
-	int fftblock = FFTBLOCK;
-
-	logd3 = ilog2(d3);
-
 	if(timers_enabled){
 		timer_start(T_FFTZ);
 	}
 
-	for(j=0; j<d2; j+=BSIZE){
+	for(int j=0; j<d2; j+=BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, d2, j, BSIZE);
 
-		#pragma oss task in(x[0;d3][beg:end-1][0;d1]) out(xout[0;d3][beg:end-1][0;d1]) \
-				private(k, j, i) firstprivate(d1, d3, fftblock, is, logd3, beg, end)
-		for(j=beg; j<end; j++){
-			for(i=0; i<=d1-fftblock; i+=fftblock){
+		#pragma oss task in(x[0;d3][beg:end-1][0;d1])		\
+				 out(xout[0;d3][beg:end-1][0;d1])	\
+				 firstprivate(beg, end, is, d3, d1)
+		for(int j=beg; j<end; j++){
+			for(int i=0; i<=d1-FFTBLOCK; i+=FFTBLOCK){
 				dcomplex y1_fft[MAXDIM][FFTBLOCKPAD];
 				dcomplex y2_fft[MAXDIM][FFTBLOCKPAD];
 
-				for(k=0; k<d3; k++){
-					for(int ii=0; ii<fftblock; ii++){
+				for(int k=0; k<d3; k++){
+					for(int ii=0; ii<FFTBLOCK; ii++){
 						y1_fft[k][ii] = x[k][j][i+ii];
 					}
 				}
 				
+				static const int logd3 = ilog2(d3);
 				cfftz(is, logd3, d3, y1_fft, y2_fft);
 				
-				for(k=0; k<d3; k++){
-					for(int ii=0; ii<fftblock; ii++){
+				for(int k=0; k<d3; k++){
+					for(int ii=0; ii<FFTBLOCK; ii++){
 						xout[k][j][i+ii] = y1_fft[k][ii];
 					}
 				}
@@ -623,13 +609,12 @@ static void checksum(int i,
 		int d1,
 		int d2,
 		int d3){
-
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
 	
-	int ntotal = NTOTAL;
-
-	#pragma oss task in(u1[0;d3][0;d2][0;d1]) out(sums[i]) \
-			firstprivate(i, nxx, nyy, nzz, ntotal)
+	#pragma oss task in(u1[0;d3][0;d2][0;d1])	\
+			 out(sums[i])			\
+			 firstprivate(i, nxx, nyy, nzz)	\
+			 node(nanos6_cluster_no_offload)
 	{
 		int j,q,r,s;
 		dcomplex chk = dcomplex_create(0.0, 0.0);
@@ -641,7 +626,7 @@ static void checksum(int i,
 			chk = dcomplex_add(chk, u1[s][r][q]);
 		}
 		
-		chk = dcomplex_div2(chk, (double)(ntotal));
+		chk = dcomplex_div2(chk, (double)(NTOTAL));
 		printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
 		sums[i] = chk;
 	}
@@ -657,10 +642,6 @@ static void compute_indexmap(void* pointer_twiddle,
 		int d3){
 	double (*twiddle)[NY][NX] = (double(*)[NY][NX])pointer_twiddle;
 
-	int i, j, k, kk, kk2, jj, kj2, ii;
-	int beg, end, chunk;
-	double ap;
-
 	/*
 	 * ---------------------------------------------------------------------
 	 * basically we want to convert the fortran indices 
@@ -671,21 +652,23 @@ static void compute_indexmap(void* pointer_twiddle,
 	 * mod(i-1+n/2, n) - n/2
 	 * ---------------------------------------------------------------------
 	 */
-	ap = - 4.0 * ALPHA * PI * PI;
-	for(k=0; k<d3; k+=BSIZE){
+	double ap = - 4.0 * ALPHA * PI * PI;
+
+	for(int k=0; k<d3; k+=BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-		#pragma oss task out(twiddle[beg:end-1][0;d2][0;d1]) \
-				private(k, kk, kk2, jj, kj2, ii, j, i) \
-				firstprivate(ap, d2, d1, nzz, nyy, nxx, beg, end)
-		for(k=beg; k<end; k++){
-			kk = ((k+nzz/2) % nzz) - nzz/2;
-			kk2 = kk*kk;
-			for(j=0; j<d2; j++){
-				jj = ((j+nyy/2) % nyy) - nyy/2;
-				kj2 = jj*jj+kk2;
-				for(i=0; i<d1; i++){
-					ii = ((i+nxx/2) % nxx) - nxx/2;
+		#pragma oss task out(twiddle[beg:end-1][0;d2][0;d1]) 	\
+				 firstprivate(beg, end, d2, d1,		\
+					      ap, nzz, nyy, nxx)
+		for(int k=beg; k<end; k++){
+			int kk = ((k+nzz/2) % nzz) - nzz/2;
+			int kk2 = kk*kk;
+			for(int j=0; j<d2; j++){
+				int jj = ((j+nyy/2) % nyy) - nyy/2;
+				int kj2 = jj*jj+kk2;
+				for(int i=0; i<d1; i++){
+					int ii = ((i+nxx/2) % nxx) - nxx/2;
 					twiddle[k][j][i] = exp(ap*(double)(ii*ii+kj2));
 				}
 			}
@@ -705,9 +688,7 @@ static void compute_initial_conditions(void* pointer_u0,
 		int d3){
 	dcomplex (*u0)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u0;
 
-	int k, j;
-	int beg, end, chunk;
-	double x0, an, start = SEED;
+	double an, start = SEED;
 	double *starts = lmalloc<double>(NZ);
 
 	/*
@@ -730,14 +711,16 @@ static void compute_initial_conditions(void* pointer_u0,
 	 * go through by z planes filling in one square at a time.
 	 * ---------------------------------------------------------------------
 	 */
-	for(k=0; k<d3; k+=BSIZE){
+	for(int k=0; k<d3; k+=BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-		#pragma oss task in(starts[0;nzz]) out(u0[beg:end-1][0;d2][0;d1]) \
-				private(k, j, x0) firstprivate(d2, nxx, beg, end)
-		for(k=beg; k<end; k++){
-			x0 = starts[k];
-			for(j=0; j<d2; j++){
+		#pragma oss task in(starts[0;nzz])		\
+				 out(u0[beg:end-1][0;d2][0;d1])	\
+				 firstprivate(beg, end, d2, nxx)
+		for(int k=beg; k<end; k++){
+			double x0 = starts[k];
+			for(int j=0; j<d2; j++){
 				vranlc(2*nxx, &x0, A, (double*)&u0[k][j][0]);
 			}
 		}
@@ -762,18 +745,17 @@ static void evolve(void* pointer_u0,
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
 	double (*twiddle)[NY][NX] = (double(*)[NY][NX])pointer_twiddle;
 
-	int i, j, k;
-	int beg, end, chunk;
-	for(k=0; k<d3; k+=BSIZE){
+	for(int k=0; k<d3; k+=BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-		#pragma oss task in(twiddle[beg:end-1][0;d2][0;d1]) \
-				inout(u0[beg:end-1][0;d2][0;d1]) \
-				out(u1[beg:end-1][0;d2][0;d1]) \
-				private(k, j, i) firstprivate(d2, d1, beg, end)
-		for(k=beg; k<end; k++){
-			for(j=0; j<d2; j++){
-				for(i=0; i<d1; i++){
+		#pragma oss task in(twiddle[beg:end-1][0;d2][0;d1])	\
+				 inout(u0[beg:end-1][0;d2][0;d1])	\
+				 out(u1[beg:end-1][0;d2][0;d1])		\
+				 firstprivate(beg, end, d2, d1)
+		for(int k=beg; k<end; k++){
+			for(int j=0; j<d2; j++){
+				for(int i=0; i<d1; i++){
 					u0[k][j][i] = dcomplex_mul2(u0[k][j][i], twiddle[k][j][i]);
 					u1[k][j][i] = u0[k][j][i];
 				}
@@ -963,18 +945,17 @@ static void init_ui(void* pointer_u0,
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
 	double (*twiddle)[NY][NX] = (double(*)[NY][NX])pointer_twiddle;
 
-	int i, j, k;
-	int beg, end, chunk;
-	for(k=0; k<d3; k+=BSIZE){
+	for(int k=0; k<d3; k+=BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, d3, k, BSIZE);
 
-		#pragma oss task out(u0[beg:end-1][0;d2][0;d1], \
-				u1[beg:end-1][0;d2][0;d1], \
-				twiddle[beg:end-1][0;d2][0;d1]) \
-				private(k, j, i) firstprivate(d2, d1, beg, end)
-		for(k=beg; k<end; k++){
-			for(j=0; j<d2; j++){
-				for(i=0; i<d1; i++){
+		#pragma oss task out(u0[beg:end-1][0;d2][0;d1],		\
+				     u1[beg:end-1][0;d2][0;d1],		\
+				     twiddle[beg:end-1][0;d2][0;d1])	\
+				 firstprivate(beg, end, d2, d1)
+		for(int k=beg; k<end; k++){
+			for(int j=0; j<d2; j++){
+				for(int i=0; i<d1; i++){
 					u0[k][j][i] = dcomplex_create(0.0, 0.0);
 					u1[k][j][i] = dcomplex_create(0.0, 0.0);
 					twiddle[k][j][i] = 0.0;

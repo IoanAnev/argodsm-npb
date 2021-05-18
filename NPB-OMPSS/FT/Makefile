@@ -12,6 +12,11 @@ ifdef version
 		EXECUTABLE=${BENCHMARK}-ompss-2-cluster-strong
 	endif
 endif
+ifdef version
+	ifeq "$(version)" "ompss-2-cluster-weak"
+		EXECUTABLE=${BENCHMARK}-ompss-2-cluster-weak
+	endif
+endif
 
 OBJS = ${EXECUTABLE}.o ${COMMON}/c_${RAND}.o ${COMMON}/c_print_results.o \
        ${COMMON}/c_timers.o ${COMMON}/c_wtime.o #../omp-prof.o

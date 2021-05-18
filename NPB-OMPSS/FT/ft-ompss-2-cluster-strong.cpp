@@ -210,6 +210,7 @@ static void verify(int d1,
 		int d2,
 		int d3,
 		int nt,
+		dcomplex* sums,
 		boolean* verified,
 		char* class_npb);
 static void task_chunk(int& beg,
@@ -227,8 +228,16 @@ int main(int argc, char **argv){
 	int i;	
 	int iter;
 	double total_time, mflops;
-	boolean verified;
-	char class_npb;
+	boolean* verified;
+	char* class_npb;
+
+	/*
+	 * ---------------------------------------------------------------------
+	 * local scalar allocations
+	 * ---------------------------------------------------------------------
+	 */
+	class_npb = lmalloc<char>(1); 
+	verified  = lmalloc<boolean>(1);
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -331,7 +340,12 @@ int main(int argc, char **argv){
 	}
 	#pragma oss taskwait
 	
-	verify(nxx, nyy, nzz, niter, &verified, &class_npb);
+	#pragma oss task in(sums[0;niter+1])			\
+			 inout(*verified, *class_npb)		\
+			 firstprivate(nxx, nyy, nzz, niter)	\
+			 node(nanos6_cluster_no_offload) // (opt.)
+	verify(nxx, nyy, nzz, niter, sums, verified, class_npb);
+	#pragma oss taskwait
 
 	timer_stop(T_TOTAL);
 	total_time = timer_read(T_TOTAL);
@@ -345,7 +359,7 @@ int main(int argc, char **argv){
 		mflops = 0.0;
 	}
 	c_print_results((char*)"FT",
-			class_npb,
+			*class_npb,
 			NX,
 			NY,
 			NZ,
@@ -353,7 +367,7 @@ int main(int argc, char **argv){
 			total_time,
 			mflops,
 			(char*)"          floating point",
-			verified,
+			*verified,
 			(char*)NPBVERSION,
 			(char*)COMPILETIME,
 			(char*)COMPILERVERSION,
@@ -367,6 +381,14 @@ int main(int argc, char **argv){
 			(char*)CS6,
 			(char*)CS7);
 	if(timers_enabled==TRUE){print_timers();}
+
+	/*
+	 * ---------------------------------------------------------------------
+	 * local scalar deallocations
+	 * ---------------------------------------------------------------------
+	 */
+	lfree<char>(class_npb, 1);
+	lfree<boolean>(verified, 1);
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -1117,6 +1139,7 @@ static void verify(int d1,
 		int d2,
 		int d3,
 		int nt,
+		dcomplex* sums,
 		boolean* verified,
 		char* class_npb){
 	int i;

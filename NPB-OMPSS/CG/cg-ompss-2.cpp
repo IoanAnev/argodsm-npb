@@ -22,7 +22,6 @@
  *      Ioannis Anevlavis <ioannis.anevlavis@etascale.com>
  */
 
-#include "omp.h"
 #include <algorithm>
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -153,14 +152,14 @@ int main(int argc, char **argv){
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
-	int beg, end, chunk;
-	double zeta;
-	double rnorm;
-	double norm_temp1, norm_temp2;
-	double t, mflops, tmax;
 	char class_npb;
 	boolean verified;
+	int beg, end, chunk;
+	double t, mflops, tmax;
 	double zeta_verify_value, epsilon, err;
+
+	double zeta, rnorm;
+	double norm_temp1, norm_temp2;
 
 	if (argc > 1) {
 		BSIZE = atoi(argv[1]);

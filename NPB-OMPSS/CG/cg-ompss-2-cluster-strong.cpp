@@ -22,7 +22,6 @@
  *      Ioannis Anevlavis <ioannis.anevlavis@etascale.com>
  */
 
-#include "omp.h"
 #include <algorithm>
 #include "../common/memory.hpp"
 #include "../common/npb-CPP.hpp"
@@ -146,13 +145,12 @@ static void task_chunk(int& beg,
 
 /* cg */
 int main(int argc, char **argv){
+	char class_npb;
 	int beg, end, chunk;
+	double t, tmax, zeta_verify_value;
+
 	double *zeta, *rnorm;
 	double *norm_temp1, *norm_temp2;
-	double t, mflops, tmax;
-	char class_npb;
-	boolean verified;
-	double zeta_verify_value, epsilon, err;
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -482,11 +480,15 @@ int main(int argc, char **argv){
 	t = timer_read(T_BENCH);
 	printf(" Benchmark completed\n");
 
-	#pragma oss task in(*zeta) node(nanos6_cluster_no_offload)
+	#pragma oss task in(*zeta)					\
+			 firstprivate(class_npb, zeta_verify_value)	\
+			 node(nanos6_cluster_no_offload) // (opt.)
 	{
-		epsilon = 1.0e-10;
+		double mflops;
+		boolean verified;
+		double epsilon = 1.0e-10;
 		if(class_npb != 'U'){
-			err = fabs(*zeta - zeta_verify_value) / zeta_verify_value;
+			double err = fabs(*zeta - zeta_verify_value) / zeta_verify_value;
 			if(err <= epsilon){
 				verified = TRUE;
 				printf(" VERIFICATION SUCCESSFUL\n");

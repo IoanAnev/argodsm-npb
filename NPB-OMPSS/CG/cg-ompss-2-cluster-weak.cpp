@@ -22,8 +22,6 @@
  *      Ioannis Anevlavis <ioannis.anevlavis@etascale.com>
  */
 
-#include "omp.h"
-#include <cassert>
 #include <algorithm>
 #include "../common/memory.hpp"
 #include "../common/npb-CPP.hpp"
@@ -157,13 +155,11 @@ static void node_chunk(int& node_id,
 
 /* cg */
 int main(int argc, char **argv){
-	int beg, end, chunk;
+	char class_npb;
+	double t, tmax, zeta_verify_value;
+
 	double *zeta, *rnorm;
 	double *norm_temp1, *norm_temp2;
-	double t, mflops, tmax;
-	char class_npb;
-	boolean verified;
-	double zeta_verify_value, epsilon, err;
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -304,6 +300,7 @@ int main(int argc, char **argv){
 	 * ---------------------------------------------------------------------
 	 */
 	for(int j = 0; j < NA; j += BSIZE){
+		int beg, end, chunk;
 		task_chunk(beg, end, chunk, NA, j, BSIZE);
 		int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 
@@ -334,6 +331,7 @@ int main(int argc, char **argv){
 
 			/* set starting vector to (1, 1, .... 1) */
 			for (int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
+				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE);
 
 				#pragma oss task out(x[beg:end-1])		\
@@ -370,6 +368,7 @@ int main(int argc, char **argv){
 			}
 
 			for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 				#pragma oss task out(q[beg:end-1],		\
@@ -434,6 +433,7 @@ int main(int argc, char **argv){
 				}
 
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 					#pragma oss task in(x[beg:end-1],		\
@@ -470,6 +470,7 @@ int main(int argc, char **argv){
 				}
 
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 					#pragma oss task in(z[beg:end-1], *norm_temp2)	\
@@ -502,6 +503,7 @@ int main(int argc, char **argv){
 
 			/* set starting vector to (1, 1, .... 1) */
 			for (int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
+				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE);
 
 				#pragma oss task out(x[beg:end-1])		\
@@ -569,6 +571,7 @@ int main(int argc, char **argv){
 				}
 
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 					#pragma oss task in(x[beg:end-1],		\
@@ -614,6 +617,7 @@ int main(int argc, char **argv){
 				}
 
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 					#pragma oss task in(z[beg:end-1], *norm_temp2)	\
@@ -639,11 +643,15 @@ int main(int argc, char **argv){
 	t = timer_read(T_BENCH);
 	printf(" Benchmark completed\n");
 
-	#pragma oss task in(*zeta) node(nanos6_cluster_no_offload)
+	#pragma oss task in(*zeta)					\
+			 firstprivate(class_npb, zeta_verify_value)	\
+			 node(nanos6_cluster_no_offload) // (opt.)
 	{
-		epsilon = 1.0e-10;
+		double mflops;
+		boolean verified;
+		double epsilon = 1.0e-10;
 		if(class_npb != 'U'){
-			err = fabs(*zeta - zeta_verify_value) / zeta_verify_value;
+			double err = fabs(*zeta - zeta_verify_value) / zeta_verify_value;
 			if(err <= epsilon){
 				verified = TRUE;
 				printf(" VERIFICATION SUCCESSFUL\n");
@@ -782,7 +790,6 @@ static void conj_grad(int colidx[],
 		double r[],
 		double* rnorm){
 	int cgit, cgitmax;
-	int beg, end, chunk;
 
 	cgitmax = 25;
 	#pragma oss task out(*rho, *sum)
@@ -815,6 +822,7 @@ static void conj_grad(int colidx[],
 			}
 
 			for(int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
+				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE);
 
 				#pragma oss task in(x[beg:end-1])		\
@@ -857,6 +865,7 @@ static void conj_grad(int colidx[],
 			}
 
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 				#pragma oss task in(r[beg:end-1])		\
@@ -928,6 +937,7 @@ static void conj_grad(int colidx[],
 				}
 
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 					int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 					
@@ -977,6 +987,7 @@ static void conj_grad(int colidx[],
 				}
 
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 					#pragma oss task in(p[beg:end-1],		\
@@ -1027,6 +1038,7 @@ static void conj_grad(int colidx[],
 				}
 
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 					#pragma oss task in(p[beg:end-1],		\
@@ -1082,6 +1094,7 @@ static void conj_grad(int colidx[],
 				}
 
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 
 					#pragma oss task in(r[beg:end-1], *beta)	\
@@ -1133,6 +1146,7 @@ static void conj_grad(int colidx[],
 			}
 
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
 				int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 				
@@ -1182,6 +1196,7 @@ static void conj_grad(int colidx[],
 			}
 
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				int beg, end, chunk;
 				task_chunk(beg, end, chunk, NA, gg+region_per_node_naa, BSIZE);
 
 				#pragma oss task in(x[beg:end-1],		\

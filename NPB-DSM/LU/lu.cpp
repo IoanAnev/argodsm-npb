@@ -69,6 +69,14 @@
 #define T_ADD 10
 #define T_L2NORM 11
 #define T_LAST 11
+/*
+ * ---------------------------------------------------------------------
+ * option to whether or not cover larger regions with ssi/ssd
+ * 	0: performs fine-grained ssi/ssd
+ * 	1: performs ssi/ssd in bulk mode
+ * ---------------------------------------------------------------------
+ */
+#define BULKY_SSID 0
 
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
@@ -518,10 +526,12 @@ void blts(int nx,
 	#pragma omp single
 	{
 		if (workrank != 0)
+#if (BULKY_SSID == 0)
 			for(i=ist; i<iend; i++)
 				argo::backend::selective_acquire(&v[k][beg-1][i][0], 5*sizeof(double));
-			// this is better instead for invoking each time (doesn't work for buts())
-			//argo::backend::selective_acquire(&v[k][beg-1][ist][0], (iend-ist)*5*sizeof(double));
+#else
+			argo::backend::selective_acquire(&v[k][beg-1][ist][0], (iend-ist)*5*sizeof(double));
+#endif
 		
 		if (workrank != 0){
 			while (gflag[workrank-1] == 0) {
@@ -674,10 +684,12 @@ void blts(int nx,
 		
 		if (j == end-1) {
 			if (workrank != numtasks-1)
+#if (BULKY_SSID == 0)
 				for(i=ist; i<iend; i++)
 					argo::backend::selective_release(&v[k][j][i][0], 5*sizeof(double));
-				// this is better instead for invoking each time (doesn't work for buts())
-				//argo::backend::selective_release(&v[k][j][ist][0], (iend-ist)*5*sizeof(double));
+#else
+				argo::backend::selective_release(&v[k][j][ist][0], (iend-ist)*5*sizeof(double));
+#endif
 			unlock = 1;
 		}
 	}
@@ -753,8 +765,12 @@ void buts(int nx,
 	#pragma omp single
 	{
 		if (workrank != numtasks-1)
+#if (BULKY_SSID == 0)
 			for(i=iend-1; i>=ist; i--)
 				argo::backend::selective_acquire(&v[k][end+1][i][0], 5*sizeof(double));
+#else
+			argo::backend::selective_acquire(&v[k][end+1][ist][0], (iend-ist)*5*sizeof(double));
+#endif
 
 		if (workrank != numtasks-1){
 			while (gflag2[workrank+1] == 0){
@@ -909,8 +925,12 @@ void buts(int nx,
 
 		if (j == beg) {
 			if (workrank != 0)
+#if (BULKY_SSID == 0)
 				for(i=iend-1; i>=ist; i--)
 					argo::backend::selective_release(&v[k][j][i][0], 5*sizeof(double));
+#else
+				argo::backend::selective_release(&v[k][j][ist][0], (iend-ist)*5*sizeof(double));
+#endif
 			unlock = 1;
 		}
 	}

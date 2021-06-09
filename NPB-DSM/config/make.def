@@ -1,6 +1,6 @@
 #---------------------------------------------------------------------------
 #
-#                SITE- AND/OR PLATFORM-SPECIFIC DEFINITIONS. 
+#                SITE- AND/OR PLATFORM-SPECIFIC DEFINITIONS.
 #
 #---------------------------------------------------------------------------
 
@@ -12,12 +12,12 @@
 #---------------------------------------------------------------------------
 # Parallel C:
 #
-# CC         - C compiler 
+# CC         - C compiler
 # CFLAGS     - C compilation arguments
-# C_INC      - any -I arguments required for compiling C 
+# C_INC      - any -I arguments required for compiling C
 # CLINK      - C linker
 # CLINKFLAGS - C linker flags
-# C_LIB      - any -L and -l arguments required for linking C 
+# C_LIB      - any -L and -l arguments required for linking C
 #
 # compilations are done with $(CC) $(C_INC) $(CFLAGS) or
 #                            $(CC) $(CFLAGS)
@@ -27,89 +27,81 @@
 #---------------------------------------------------------------------------
 # This is the ArgoDSM installation directory
 #---------------------------------------------------------------------------
-ARGO_INSTALL_DIRECTORY=${HOME}/argodsm/install
+ARGO_INSTALL_DIRECTORY=${HOME}/argodsm-bench/argodsm/install
 
 #---------------------------------------------------------------------------
 # This is the include and lib ArgoDSM flags
 #---------------------------------------------------------------------------
-
 IDFLAGS = -I${ARGO_INSTALL_DIRECTORY}/include/argo -I${ARGO_INSTALL_DIRECTORY}/include/argo/synchronization
 LDFLAGS = -L${ARGO_INSTALL_DIRECTORY}/lib -Wl,-rpath=${ARGO_INSTALL_DIRECTORY}/lib
 
 #---------------------------------------------------------------------------
 # This is the C compiler used for OpenMP programs
 #---------------------------------------------------------------------------
-CC = mpic++ -std=c++14 $(IDFLAGS) $(LDFLAGS)
-
+CC = mpic++ -std=c++11
 # This links C programs; usually the same as ${CC}
-CLINK	= $(CC)
+CLINK = $(CC)
 
 #---------------------------------------------------------------------------
-# These macros are passed to the linker 
+# These macros are passed to the linker
 #---------------------------------------------------------------------------
-C_LIB  = -lm -largo -largobackend-mpi -lnuma -lrt
+C_LIB = $(LDFLAGS) -lm -largo -largobackend-mpi -lnuma -lrt
 
 #---------------------------------------------------------------------------
-# These macros are passed to the compiler 
+# These macros are passed to the compiler
 #---------------------------------------------------------------------------
-C_INC = -I../common 
+C_INC = $(IDFLAGS) -I../common
 
 #---------------------------------------------------------------------------
 # Global *compile time* flags for C programs
 #---------------------------------------------------------------------------
-CFLAGS	= -O3 -fopenmp
+CFLAGS = -O3 -fopenmp
 # CFLAGS = -g
 
 #---------------------------------------------------------------------------
-# Global *link time* flags. Flags for increasing maximum executable 
-# size usually go here. 
+# Global *link time* flags. Flags for increasing maximum executable
+# size usually go here.
 #---------------------------------------------------------------------------
 CLINKFLAGS = -O3 -fopenmp
-
 
 #---------------------------------------------------------------------------
 # Utilities C:
 #
-# This is the C compiler used to compile C utilities.  Flags required by 
-# this compiler go here also; typically there are few flags required; hence 
+# This is the C compiler used to compile C utilities.  Flags required by
+# this compiler go here also; typically there are few flags required; hence
 # there are no separate macros provided for such flags.
 #---------------------------------------------------------------------------
-UCC	= mpic++ -fopenmp
-
-
-#---------------------------------------------------------------------------
-# Destination of executables, relative to subdirs of the main directory. . 
-#---------------------------------------------------------------------------
-BINDIR	= ../bin
-
+UCC = $(CC) -fopenmp
 
 #---------------------------------------------------------------------------
-# The variable RAND controls which random number generator 
-# is used. It is described in detail in Doc/README.install. 
-# Use "randi8" unless there is a reason to use another one. 
+# Destination of executables, relative to subdirs of the main directory.
+#---------------------------------------------------------------------------
+BINDIR = ../bin
+
+#---------------------------------------------------------------------------
+# The variable RAND controls which random number generator
+# is used. It is described in detail in Doc/README.install.
+# Use "randi8" unless there is a reason to use another one.
 # Other allowed values are "randi8_safe", "randdp" and "randdpvec"
 #---------------------------------------------------------------------------
-# RAND   = randi8
+# RAND = randi8
 # The following is highly reliable but may be slow:
-RAND   = randdp
-
+RAND = randdp
 
 #---------------------------------------------------------------------------
 # The variable WTIME is the name of the wtime source code module in the
-# NPB2.x/common directory.  
+# NPB2.x/common directory.
 # For most machines,       use wtime.c
 # For SGI power challenge: use wtime_sgi64.c
 #---------------------------------------------------------------------------
-WTIME  = wtime.cpp
-
+WTIME = wtime.cpp
 
 #---------------------------------------------------------------------------
-# Enable if either Cray or IBM: 
+# Enable if either Cray or IBM:
 # (no such flag for most machines: see common/wtime.h)
 # This is used by the C compiler to pass the machine name to common/wtime.h,
 # where the C/Fortran binding interface format is determined
 #---------------------------------------------------------------------------
-# MACHINE	=	-DCRAY
-# MACHINE	=	-DIBM
-
+# MACHINE = -DCRAY
+# MACHINE = -DIBM
 

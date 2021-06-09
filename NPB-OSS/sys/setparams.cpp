@@ -50,7 +50,6 @@
 #include <cctype>
 #include <cstring>
 #include <ctime>
-#include <algorithm>
 
 /*
  * this is the master version number for this set of 
@@ -556,7 +555,7 @@ void write_ft_info(FILE *fp, char class_npb){
 	fprintf(fp, "#define NYP              %d\n", ny);
 	fprintf(fp, "#define NTOTAL           %llu\n", (unsigned long long)nx*ny*nz);
 	fprintf(fp, "#define NTOTALP          %llu\n", (unsigned long long)(nx+1)*ny*nz);
-	fprintf(fp, "#define DEFAULT_BEHAVIOR %d\n", (int)std::min({nx, ny, ny}));
+	fprintf(fp, "#define DEFAULT_BEHAVIOR %d\n", 1);
 }
 
 /*

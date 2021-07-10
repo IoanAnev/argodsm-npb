@@ -27,7 +27,7 @@
 #---------------------------------------------------------------------------
 # This is the ArgoDSM installation directory
 #---------------------------------------------------------------------------
-ARGO_INSTALL_DIRECTORY=${HOME}/argodsm-bench/argodsm/install
+ARGO_INSTALL_DIRECTORY=${HOME}/argodsm/install
 
 #---------------------------------------------------------------------------
 # This is the include and lib ArgoDSM flags

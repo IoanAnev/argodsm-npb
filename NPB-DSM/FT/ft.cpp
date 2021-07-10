@@ -220,7 +220,7 @@ int main(int argc, char **argv){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(15*1024*1024*1024UL);
+	argo::init(12*1024*1024*1024UL);
 	/*
 	 * -------------------------------------------------------------------------
 	 * fetch workrank, number of nodes, and number of threads
@@ -249,9 +249,10 @@ int main(int argc, char **argv){
 	u0=argo::conew_array<dcomplex>(NTOTAL);
 	u1=argo::conew_array<dcomplex>(NTOTAL);
 	twiddle=argo::conew_array<double>(NTOTAL);
+	
+	lock=new argo::globallock::cohort_lock();
 	gchk=argo::conew_<dcomplex>(dcomplex_create(0.0, 0.0));
 
-	lock=new argo::globallock::cohort_lock();
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -785,9 +786,12 @@ static void evolve(void* pointer_u0,
 static void fft(int dir,
 		void* pointer_x1,
 		void* pointer_x2){
-	dcomplex y1[MAXDIM*FFTBLOCKPAD];
-	dcomplex y2[MAXDIM*FFTBLOCKPAD];
-
+	//dcomplex y1[MAXDIM*FFTBLOCKPAD];
+	//dcomplex y2[MAXDIM*FFTBLOCKPAD];
+	
+	dcomplex *y1 = new dcomplex[MAXDIM*FFTBLOCKPAD];
+	dcomplex *y2 = new dcomplex[MAXDIM*FFTBLOCKPAD];
+	
 	/*
 	 * ---------------------------------------------------------------------
 	 * note: args x1, x2 must be different arrays
@@ -820,6 +824,9 @@ static void fft(int dir,
 				(dcomplex(*)[FFTBLOCKPAD])(void*)y2);
 	}
 	argo::barrier(nthreads);
+
+	delete[] y1;
+	delete[] y2;
 }
 
 /*

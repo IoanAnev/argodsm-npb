@@ -610,25 +610,24 @@ static void checksum(int i,
 		int d2,
 		int d3){
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
-	
-	#pragma oss task in(u1[0;d3][0;d2][0;d1])	\
-			 out(sums[i])			\
-			 firstprivate(i, nxx, nyy, nzz)	\
-			 node(nanos6_cluster_no_offload)
-	{
-		int j,q,r,s;
-		dcomplex chk = dcomplex_create(0.0, 0.0);
 
-		for(j=1; j<=1024; j++){
-			q = j % nxx;
-			r = (3*j) % nyy;
-			s = (5*j) % nzz;
-			chk = dcomplex_add(chk, u1[s][r][q]);
-		}
-		
-		chk = dcomplex_div2(chk, (double)(NTOTAL));
-		printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
-		sums[i] = chk;
+	#pragma oss task out(sums[i]) firstprivate(i)
+		sums[i] = dcomplex_create(0.0, 0.0);
+
+	for(int j=1; j<=1024; j++){
+		int q = j % nxx;
+		int r = (3*j) % nyy;
+		int s = (5*j) % nzz;
+		#pragma oss task inout(sums[i])		\
+				 in(u1[s][r][q])	\
+				 firstprivate(s, r, q, i)
+		sums[i] = dcomplex_add(sums[i], u1[s][r][q]);
+	}
+	
+	#pragma oss task inout(sums[i]) firstprivate(i)
+	{
+		sums[i] = dcomplex_div2(sums[i], (double)(NTOTAL));
+		printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, sums[i].real, sums[i].imag);
 	}
 }
 

@@ -23,6 +23,7 @@
  */
 
 #include "argo.hpp"
+#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -85,7 +86,9 @@ static double (*z);
 static double (*p);
 static double (*q);
 static double (*r);
-static double (*gtemps);
+static double (*gnorms);
+
+static argo::globallock::cohort_lock *lock;
 
 static int workrank;
 static int numtasks;
@@ -190,7 +193,9 @@ int main(int argc, char **argv)
 	p = argo::conew_array<double>(NA+2+1);
 	q = argo::conew_array<double>(NA+2+1);
 	r = argo::conew_array<double>(NA+2+1);
-	gtemps = argo::conew_array<double>(2*numtasks);
+	gnorms = argo::conew_array<double>(2);
+
+	lock = new argo::globallock::cohort_lock();
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -414,32 +419,36 @@ int main(int argc, char **argv)
 			 */
 			distribute(beg, end, lastcol-firstcol+1, 1, 1);
 
-			#pragma omp single
+			#pragma omp master
 			{	
 				norm_temp11 = 0.0;
 				norm_temp12 = 0.0;
+
+				if (workrank == 0) {
+					gnorms[0] = 0.0;
+					gnorms[1] = 0.0;
+				}
 			}
+			argo::barrier(nthreads);
 
 			#pragma omp for reduction(+:norm_temp11,norm_temp12)
 			for (j = beg; j <= end; j++) {
 				norm_temp11 += x[j]*z[j];
 				norm_temp12 += z[j]*z[j];
 			}
-			#pragma omp single
+			#pragma omp master
 			{
-				gtemps[workrank] = norm_temp11;
-				gtemps[workrank+numtasks] = norm_temp12;
+				lock->lock();
+				gnorms[0] += norm_temp11;
+				gnorms[1] += norm_temp12;
+				lock->unlock();
 			}
 			argo::barrier(nthreads);
 
 			#pragma omp single
 			{
-				for (j = 0; j < numtasks; j++) {
-					if (j != workrank) {
-						norm_temp11 += gtemps[j];
-						norm_temp12 += gtemps[j+numtasks];
-					}
-				}
+				norm_temp11 = gnorms[0];
+				norm_temp12 = gnorms[1];
 
 				norm_temp12 = 1.0 / sqrt(norm_temp12);
 				zeta = SHIFT + 1.0 / norm_temp11;
@@ -555,7 +564,9 @@ int main(int argc, char **argv)
 	argo::codelete_array(p);
 	argo::codelete_array(q);
 	argo::codelete_array(r);
-	argo::codelete_array(gtemps);
+
+	delete lock;
+	argo::codelete_array(gnorms);
 	/*
 	 * -------------------------------------------------------------------------
 	 * finalize argodsm
@@ -604,6 +615,11 @@ static void conj_grad (int colidx[],
 		r[j] = x[j];
 		p[j] = r[j];
 	}
+
+	if (workrank == 0) {
+		gnorms[0] = 0.0;
+		gnorms[1] = 0.0;
+	}
 	argo::barrier(nthreads);
 
 	/*
@@ -617,13 +633,15 @@ static void conj_grad (int colidx[],
 		rho += x[j]*x[j];
 	}
 	#pragma omp master
-	gtemps[workrank] = rho;
+	{
+		lock->lock();
+		gnorms[0] += rho;
+		lock->unlock();
+	}
 	argo::barrier(nthreads);
 
 	#pragma omp single
-	for (j = 0; j < numtasks; j++)
-		if (j != workrank)
-			rho += gtemps[j];
+		rho = gnorms[0];
 
 	/* the conj grad iteration loop */
     	for (cgit = 1; cgit <= cgitmax; cgit++) {
@@ -674,13 +692,17 @@ static void conj_grad (int colidx[],
 			d += p[j]*q[j];
 		}
 		#pragma omp master
-		gtemps[workrank] = d;
+		{
+			lock->lock();
+			gnorms[1] += d;
+			lock->unlock();
+		}
+		if (workrank == 0)
+			gnorms[0] = 0.0;
 		argo::barrier(nthreads);
 
 		#pragma omp single
-		for (j = 0; j < numtasks; j++)
-			if (j != workrank)
-				d += gtemps[j];
+			d = gnorms[1];
 
 		/*
 		 * --------------------------------------------------------------------
@@ -715,13 +737,17 @@ static void conj_grad (int colidx[],
 			rho += r[j]*r[j];
 		}
 		#pragma omp master
-		gtemps[workrank] = rho;
+		{
+			lock->lock();
+			gnorms[0] += rho;
+			lock->unlock();
+		}
+		if (workrank == 0)
+			gnorms[1] = 0.0;
 		argo::barrier(nthreads);
 
 		#pragma omp single
-		for (j = 0; j < numtasks; j++)
-			if (j != workrank)
-				rho += gtemps[j];
+			rho = gnorms[0];
 
 		/*
 		 * ---------------------------------------------------------------------
@@ -773,13 +799,15 @@ static void conj_grad (int colidx[],
 		sum += d*d;
 	}
 	#pragma omp master
-	gtemps[workrank] = sum;
+	{
+		lock->lock();
+		gnorms[1] += sum;
+		lock->unlock();
+	}
 	argo::barrier(nthreads);
 
 	#pragma omp single
-	for (j = 0; j < numtasks; j++)
-		if (j != workrank)
-			sum += gtemps[j];
+		sum = gnorms[1];
 
 	#pragma omp single
 		*rnorm = sqrt(sum);

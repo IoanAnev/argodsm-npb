@@ -367,7 +367,6 @@ int main(int argc, char **argv){
 
 		#pragma omp single
 			zeta = 0.0;
-
 		argo::barrier(nthreads);
 
 		#pragma omp master
@@ -388,7 +387,6 @@ int main(int argc, char **argv){
 		 * --------------------------------------------------------------------
 		 */
 		for(it = 1; it <= NITER; it++){
-			
 			/* the call to the conjugate gradient routine */
 			#pragma omp master
 			if(timeron){timer_start(T_CONJ_GRAD);}
@@ -396,7 +394,7 @@ int main(int argc, char **argv){
 			#pragma omp master
 			if(timeron){timer_stop(T_CONJ_GRAD);}
 
-			#pragma omp single
+			#pragma omp master
 			{
 				norm_temp1 = 0.0;
 				norm_temp2 = 0.0;
@@ -422,7 +420,7 @@ int main(int argc, char **argv){
 				norm_temp2 += z[j]*z[j];
 			}
 
-			#pragma omp single nowait
+			#pragma omp master
 			{
 				lock->lock();
 				gnorms[0] += norm_temp1;
@@ -440,13 +438,14 @@ int main(int argc, char **argv){
 				zeta = SHIFT + 1.0 / norm_temp1;
 			}
 
-			#pragma omp single nowait
+			#pragma omp master
 			{
 				if (workrank == 0) {
 					if(it==1){printf("\n   iteration           ||r||                 zeta\n");}
 					printf("    %5d       %20.14e%20.13e\n", it, rnorm, zeta);
 				}
 			}
+			
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
@@ -597,12 +596,13 @@ static void conj_grad(int colidx[],
 	distribute(beg_col, end_col, lastcol - firstcol + 1, 0, 0);
 
 	cgitmax = 25;
-	#pragma omp single nowait
+	#pragma omp master
 	{
 
 		rho = 0.0;
 		sum = 0.0;
 	}
+	
 	/* initialize the CG algorithm */
 	#pragma omp for
 	for(j = beg_naa1; j < end_naa1; j++){
@@ -612,7 +612,7 @@ static void conj_grad(int colidx[],
 		p[j] = r[j];
 	}
 
-	#pragma omp single nowait
+	#pragma omp master
 	if (workrank == 0) {
 		gnorms[0] = 0.0;
 		gnorms[1] = 0.0;
@@ -630,7 +630,7 @@ static void conj_grad(int colidx[],
 		rho += r[j]*r[j];
 	}
 
-	#pragma omp single nowait
+	#pragma omp master
 	{
 		lock->lock();
 		gnorms[0] += rho;
@@ -657,7 +657,7 @@ static void conj_grad(int colidx[],
 		 * on the Cray t3d - overall speed of code is 1.5 times faster.
 		 */
 
-		#pragma omp single nowait
+		#pragma omp master
 		{
 			d = 0.0;
 			/*
@@ -689,14 +689,14 @@ static void conj_grad(int colidx[],
 			d += p[j]*q[j];
 		}
 
-		#pragma omp single nowait
+		#pragma omp master
 		{
 			lock->lock();
 			gnorms[1] += d;
 			lock->unlock();
 		}
 
-		#pragma omp single nowait
+		#pragma omp master
 		if (workrank == 0)
 			gnorms[0] = 0.0;
 		argo::barrier(nthreads);
@@ -718,28 +718,29 @@ static void conj_grad(int colidx[],
 		 * ---------------------------------------------------------------------
 		 */
 
-		#pragma omp for reduction(+:rho)
+		#pragma omp for
 		for(j = beg_col; j < end_col; j++){
 			z[j] += alpha*p[j];
 			r[j] -= alpha*q[j];
-
+			
 			/*
 			 * ---------------------------------------------------------------------
 			 * rho = r.r
 			 * now, obtain the norm of r: first, sum squares of r elements locally...
 			 * ---------------------------------------------------------------------
 			 */
+			#pragma omp atomic
 			rho += r[j]*r[j];
 		}
 
-		#pragma omp single nowait
+		#pragma omp master
 		{
 			lock->lock();
 			gnorms[0] += rho;
 			lock->unlock();
 		}
 
-		#pragma omp single nowait
+		#pragma omp master
 		if (workrank == 0)
 			gnorms[1] = 0.0;
 		argo::barrier(nthreads);
@@ -793,7 +794,7 @@ static void conj_grad(int colidx[],
 		sum += suml*suml;
 	}
 
-	#pragma omp single nowait
+	#pragma omp master
 	{
 		lock->lock();
 		gnorms[1] += sum;
@@ -802,10 +803,10 @@ static void conj_grad(int colidx[],
 	argo::barrier(nthreads);
 
 	#pragma omp single
-		sum = gnorms[1];
-
-	#pragma omp single
+	{
+		sum    = gnorms[1];
 		*rnorm = sqrt(sum);
+	}
 }
 
 /*

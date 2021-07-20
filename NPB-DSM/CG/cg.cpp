@@ -344,7 +344,7 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 += x[j] * z[j];
+				norm_temp1 +=   x[j] * z[j];
 				norm_temp2 += + z[j] * z[j];
 			}
 
@@ -422,7 +422,7 @@ int main(int argc, char **argv){
 				norm_temp2 += z[j]*z[j];
 			}
 
-			#pragma omp master
+			#pragma omp single nowait
 			{
 				lock->lock();
 				gnorms[0] += norm_temp1;
@@ -440,7 +440,7 @@ int main(int argc, char **argv){
 				zeta = SHIFT + 1.0 / norm_temp1;
 			}
 
-			#pragma omp master
+			#pragma omp single nowait
 			{
 				if (workrank == 0) {
 					if(it==1){printf("\n   iteration           ||r||                 zeta\n");}
@@ -612,6 +612,7 @@ static void conj_grad(int colidx[],
 		p[j] = r[j];
 	}
 
+	#pragma omp single nowait
 	if (workrank == 0) {
 		gnorms[0] = 0.0;
 		gnorms[1] = 0.0;
@@ -629,7 +630,7 @@ static void conj_grad(int colidx[],
 		rho += r[j]*r[j];
 	}
 
-	#pragma omp master
+	#pragma omp single nowait
 	{
 		lock->lock();
 		gnorms[0] += rho;
@@ -676,7 +677,6 @@ static void conj_grad(int colidx[],
 			}
 			q[j] = suml;
 		}
-		argo::barrier(nthreads);
 
 		/*
 		 * --------------------------------------------------------------------
@@ -689,12 +689,14 @@ static void conj_grad(int colidx[],
 			d += p[j]*q[j];
 		}
 
-		#pragma omp master
+		#pragma omp single nowait
 		{
 			lock->lock();
 			gnorms[1] += d;
 			lock->unlock();
 		}
+
+		#pragma omp single nowait
 		if (workrank == 0)
 			gnorms[0] = 0.0;
 		argo::barrier(nthreads);
@@ -730,12 +732,14 @@ static void conj_grad(int colidx[],
 			rho += r[j]*r[j];
 		}
 
-		#pragma omp master
+		#pragma omp single nowait
 		{
 			lock->lock();
 			gnorms[0] += rho;
 			lock->unlock();
 		}
+
+		#pragma omp single nowait
 		if (workrank == 0)
 			gnorms[1] = 0.0;
 		argo::barrier(nthreads);
@@ -789,7 +793,7 @@ static void conj_grad(int colidx[],
 		sum += suml*suml;
 	}
 
-	#pragma omp master
+	#pragma omp single nowait
 	{
 		lock->lock();
 		gnorms[1] += sum;

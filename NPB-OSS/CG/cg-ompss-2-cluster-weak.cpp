@@ -771,7 +771,7 @@ int main(int argc, char **argv){
 	dfree<double>(alpha, 1);
 	dfree<double>(beta, 1);
 
-	return 0;
+	exit(EXIT_SUCCESS);
 }
 
 /*

@@ -304,8 +304,9 @@ int main(int argc, char **argv){
 		task_chunk(beg, end, chunk, NA, j, BSIZE);
 		int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 
-		#pragma oss task inout(colidx[beg_row:end_row-1])	\
-				 firstprivate(beg_row, end_row, firstcol)
+		#pragma oss task inout(colidx[beg_row:end_row-1])		\
+				 firstprivate(beg_row, end_row, firstcol)	\
+				 node(nanos6_cluster_no_offload)
 		for(int k = beg_row; k < end_row; k++){
 			colidx[k] -= firstcol;
 		}

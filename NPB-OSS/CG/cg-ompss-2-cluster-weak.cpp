@@ -916,8 +916,8 @@ static void conj_grad(int colidx[],
 			int beg_col_out = *std::min_element(colidx+beg_row_out, colidx+end_row_out);
 			int end_col_out = *std::max_element(colidx+beg_row_out, colidx+end_row_out);
 
-			#pragma oss task weakin(rowstr[0;naa+1],			\
-						colidx[0;nzz],				\
+			#pragma oss task weakin(rowstr[gg;region_per_node_naa+1],	\
+						colidx[beg_row_out:end_row_out-1],	\
 						a[beg_row_out:end_row_out-1],		\
 						p[beg_col_out:end_col_out])		\
 					 weakout(q[gg;region_per_node_naa])		\
@@ -926,8 +926,8 @@ static void conj_grad(int colidx[],
 						      nzz, beg_col_out, end_col_out)	\
 					 node(node_id)
 			{
-				#pragma oss task in(rowstr[0;naa+1],			\
-						    colidx[0;nzz],			\
+				#pragma oss task in(rowstr[gg;region_per_node_naa+1],	\
+						    colidx[beg_row_out:end_row_out-1],	\
 						    a[beg_row_out:end_row_out-1],	\
 						    p[beg_col_out:end_col_out])		\
 						 out(q[gg;region_per_node_naa])		\
@@ -945,8 +945,8 @@ static void conj_grad(int colidx[],
 					int beg_col = *std::min_element(colidx+beg_row, colidx+end_row);
 					int end_col = *std::max_element(colidx+beg_row, colidx+end_row);
 					
-					#pragma oss task in(rowstr[0;naa+1],		\
-							    colidx[0;nzz],		\
+					#pragma oss task in(rowstr[beg:end],		\
+							    colidx[beg_row:end_row-1],	\
 							    a[beg_row:end_row-1],	\
 							    p[beg_col:end_col])		\
 							 out(q[beg:end-1]) 		\
@@ -1125,8 +1125,8 @@ static void conj_grad(int colidx[],
 		int beg_col_out = *std::min_element(colidx+beg_row_out, colidx+end_row_out);
 		int end_col_out = *std::max_element(colidx+beg_row_out, colidx+end_row_out);
 
-		#pragma oss task weakin(rowstr[0;naa+1],			\
-					colidx[0;nzz],				\
+		#pragma oss task weakin(rowstr[gg;region_per_node_naa+1],	\
+					colidx[beg_row_out:end_row_out-1],	\
 					a[beg_row_out:end_row_out-1],		\
 					z[beg_col_out:end_col_out])		\
 				 weakout(r[gg;region_per_node_naa])		\
@@ -1135,8 +1135,8 @@ static void conj_grad(int colidx[],
 					      nzz, beg_col_out, end_col_out)	\
 				 node(node_id)
 		{
-			#pragma oss task in(rowstr[0;naa+1],			\
-					    colidx[0;nzz],			\
+			#pragma oss task in(rowstr[gg;region_per_node_naa+1],	\
+					    colidx[beg_row_out:end_row_out-1],	\
 					    a[beg_row_out:end_row_out-1],	\
 					    z[beg_col_out:end_col_out])		\
 					 out(r[gg;region_per_node_naa])		\
@@ -1154,8 +1154,8 @@ static void conj_grad(int colidx[],
 				int beg_col = *std::min_element(colidx+beg_row, colidx+end_row);
 				int end_col = *std::max_element(colidx+beg_row, colidx+end_row);
 
-				#pragma oss task in(rowstr[0;naa+1],		\
-						    colidx[0;nzz],		\
+				#pragma oss task in(rowstr[beg:end],		\
+						    colidx[beg_row:end_row-1],	\
 						    a[beg_row:end_row-1],	\
 						    z[beg_col:end_col])		\
 						 out(r[beg:end-1]) 		\

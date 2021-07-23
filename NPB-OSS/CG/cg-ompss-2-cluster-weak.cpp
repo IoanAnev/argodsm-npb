@@ -302,6 +302,7 @@ int main(int argc, char **argv){
 	 * ---------------------------------------------------------------------
 	 */
 	bool outerlp = 0;
+	/*
 	for(int j = 0; j < NA; j += BSIZE){
 		if (outerlp) break;
 
@@ -316,6 +317,24 @@ int main(int argc, char **argv){
 			colidx[k] -= firstcol;
 		}
 	}
+	*/
+        
+	/* Send necessary lmalloced data to all nodes */
+        for (int j = 0; j < nanos6_get_num_cluster_nodes(); j++){
+                #pragma oss task weakin(a[0;nzz],               \
+                                        colidx[0;nzz],          \
+                                        rowstr[0;naa+1])        \
+                                 node(j)
+                {
+                        #pragma oss task in(a[0;nzz],           \
+                                            colidx[0;nzz],      \
+                                            rowstr[0;naa+1])    \
+                                         node(nanos6_cluster_no_offload)
+                        {
+                                // send lmalloced data to node `j`
+                        }
+                }
+        }
 
 	/* Calculate generic region for each node */
 	generic_region_naa_1 = (NA+1) / nanos6_get_num_cluster_nodes();

@@ -146,12 +146,14 @@ static void task_chunk(int& beg,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize);
+		const int& bsize,
+		bool& breaklp);
 static void node_chunk(int& node_id,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize);
+		const int& bsize,
+		bool& breaklp);
 
 /* cg */
 int main(int argc, char **argv){
@@ -299,9 +301,12 @@ int main(int argc, char **argv){
 	 * to local, i.e., (0 --> lastcol-firstcol)
 	 * ---------------------------------------------------------------------
 	 */
+	bool outerlp = 0;
 	for(int j = 0; j < NA; j += BSIZE){
+		if (outerlp) break;
+
 		int beg, end, chunk;
-		task_chunk(beg, end, chunk, NA, j, BSIZE);
+		task_chunk(beg, end, chunk, NA, j, BSIZE, outerlp);
 		int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 
 		#pragma oss task inout(colidx[beg_row:end_row-1])		\
@@ -315,9 +320,12 @@ int main(int argc, char **argv){
 	/* Calculate generic region for each node */
 	generic_region_naa_1 = (NA+1) / nanos6_get_num_cluster_nodes();
 
+	outerlp = 0;
 	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1);
+		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1, outerlp);
 
 		/* Spawn a task for the whole chunk and bind to `node_id` */
 		#pragma oss task weakout(x[gg;region_per_node_naa_1])		\
@@ -331,9 +339,12 @@ int main(int argc, char **argv){
 			}
 
 			/* set starting vector to (1, 1, .... 1) */
+			bool innerlp = 0;
 			for (int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE);
+				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE, innerlp);
 
 				#pragma oss task out(x[beg:end-1])		\
 						 firstprivate(beg, end)		\
@@ -348,9 +359,12 @@ int main(int argc, char **argv){
 	/* Calculate generic region for each node */
 	generic_region_naa   =  NA    / nanos6_get_num_cluster_nodes();
 
+	outerlp = 0;
 	for (int gg = 0; gg < NA; gg += generic_region_naa) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 		#pragma oss task weakout(q[gg;region_per_node_naa],		\
 				         z[gg;region_per_node_naa],		\
@@ -368,9 +382,12 @@ int main(int argc, char **argv){
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 				#pragma oss task out(q[beg:end-1],		\
 						     z[beg:end-1],		\
@@ -415,9 +432,12 @@ int main(int argc, char **argv){
 		 * so, first: (z.z)
 		 * --------------------------------------------------------------------
 		 */
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+			
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 			#pragma oss task weakin(x[gg;region_per_node_naa],		\
 						z[gg;region_per_node_naa])		\
@@ -433,9 +453,12 @@ int main(int argc, char **argv){
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(x[beg:end-1],		\
 							    z[beg:end-1])		\
@@ -454,9 +477,12 @@ int main(int argc, char **argv){
 			*norm_temp2 = 1.0 / sqrt(*norm_temp2);
 
 		/* normalize z to obtain x */
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 			#pragma oss task weakin(z[gg;region_per_node_naa], *norm_temp2)	\
 					 weakout(x[gg;region_per_node_naa])		\
@@ -470,9 +496,12 @@ int main(int argc, char **argv){
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(z[beg:end-1], *norm_temp2)	\
 							 out(x[beg:end-1]) 		\
@@ -487,9 +516,12 @@ int main(int argc, char **argv){
 	} /* end of do one iteration untimed */
 
 	/* set starting vector to (1, 1, .... 1) */
+	outerlp = 0;
 	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1);
+		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1, outerlp);
 
 		/* Spawn a task for the whole chunk and bind to `node_id` */
 		#pragma oss task weakout(x[gg;region_per_node_naa_1])		\
@@ -503,9 +535,12 @@ int main(int argc, char **argv){
 			}
 
 			/* set starting vector to (1, 1, .... 1) */
+			bool innerlp = 0;
 			for (int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE);
+				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE, innerlp);
 
 				#pragma oss task out(x[beg:end-1])		\
 						 firstprivate(beg, end)		\
@@ -553,9 +588,12 @@ int main(int argc, char **argv){
 		 * so, first: (z.z)
 		 * --------------------------------------------------------------------
 		 */
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 			#pragma oss task weakin(x[gg;region_per_node_naa],		\
 						z[gg;region_per_node_naa])		\
@@ -571,9 +609,12 @@ int main(int argc, char **argv){
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(x[beg:end-1],		\
 							    z[beg:end-1])		\
@@ -601,9 +642,12 @@ int main(int argc, char **argv){
 		printf("    %5d       %20.14e%20.13e\n", it, *rnorm, *zeta);
 
 		/* normalize z to obtain x */
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 			#pragma oss task weakin(z[gg;region_per_node_naa], *norm_temp2)	\
 					 weakout(x[gg;region_per_node_naa])		\
@@ -617,9 +661,12 @@ int main(int argc, char **argv){
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(z[beg:end-1], *norm_temp2)	\
 							 out(x[beg:end-1]) 		\
@@ -800,9 +847,12 @@ static void conj_grad(int colidx[],
 	}
 
 	/* initialize the CG algorithm */
+	bool outerlp = 0;
 	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1);
+		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1, outerlp);
 
 		#pragma oss task weakin(x[gg;region_per_node_naa_1])		\
 				 weakinout(r[gg;region_per_node_naa_1])		\
@@ -822,9 +872,12 @@ static void conj_grad(int colidx[],
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE);
+				task_chunk(beg, end, chunk, gg+region_per_node_naa_1, j, BSIZE, innerlp);
 
 				#pragma oss task in(x[beg:end-1])		\
 						 inout(r[beg:end-1])		\
@@ -849,9 +902,12 @@ static void conj_grad(int colidx[],
 	 * now, obtain the norm of r: First, sum squares of r elements locally...
 	 * --------------------------------------------------------------------
 	 */
+	outerlp = 0;
 	for (int gg = 0; gg < NA; gg += generic_region_naa) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 		#pragma oss task weakin(r[gg;region_per_node_naa])		\
 				 weakinout(*rho)				\
@@ -865,9 +921,12 @@ static void conj_grad(int colidx[],
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 				#pragma oss task in(r[beg:end-1])		\
 						 inout(*rho)			\
@@ -908,9 +967,12 @@ static void conj_grad(int colidx[],
 			*rho = 0.0;
 		}
 
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+			
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 			int beg_row_out{rowstr[gg]}, end_row_out{rowstr[gg+region_per_node_naa]};
 			
 			/* colidx elements are not stored in ascending order as in rowstr */
@@ -937,9 +999,12 @@ static void conj_grad(int colidx[],
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+					
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 					int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 					
 					/* colidx elements are not stored in ascending order as in rowstr */
@@ -969,9 +1034,12 @@ static void conj_grad(int colidx[],
 		 * obtain p.q
 		 * --------------------------------------------------------------------
 		 */
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+			
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 			#pragma oss task weakin(p[gg;region_per_node_naa],		\
 						q[gg;region_per_node_naa])		\
@@ -987,9 +1055,12 @@ static void conj_grad(int colidx[],
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+					
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(p[beg:end-1],		\
 							    q[beg:end-1])		\
@@ -1018,9 +1089,12 @@ static void conj_grad(int colidx[],
 		 * and    r = r - alpha*q
 		 * ---------------------------------------------------------------------
 		 */
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+			
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 			#pragma oss task weakin(p[gg;region_per_node_naa],		\
 						q[gg;region_per_node_naa], *alpha)	\
@@ -1038,9 +1112,12 @@ static void conj_grad(int colidx[],
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+					
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(p[beg:end-1],		\
 							    q[beg:end-1], *alpha) 	\
@@ -1078,9 +1155,12 @@ static void conj_grad(int colidx[],
 		 * p = r + beta*p
 		 * ---------------------------------------------------------------------
 		 */
+		outerlp = 0;
 		for (int gg = 0; gg < NA; gg += generic_region_naa) {
+			if (outerlp) break;
+			
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 			#pragma oss task weakin(r[gg;region_per_node_naa], *beta)	\
 					 weakinout(p[gg;region_per_node_naa])		\
@@ -1094,9 +1174,12 @@ static void conj_grad(int colidx[],
 					// fetch all data in one go
 				}
 
+				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+					if (innerlp) break;
+					
 					int beg, end, chunk;
-					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(r[beg:end-1], *beta)	\
 							 inout(p[beg:end-1])		\
@@ -1117,9 +1200,12 @@ static void conj_grad(int colidx[],
 	 * the partition submatrix-vector multiply
 	 * ---------------------------------------------------------------------
 	 */
+	outerlp = 0;
 	for (int gg = 0; gg < NA; gg += generic_region_naa) {
+		if (outerlp) break;
+		
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 		int beg_row_out{rowstr[gg]}, end_row_out{rowstr[gg+region_per_node_naa]};
 		
 		/* colidx elements are not stored in ascending order as in rowstr */
@@ -1146,9 +1232,12 @@ static void conj_grad(int colidx[],
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				if (innerlp) break;
+				
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE);
+				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 				int beg_row{rowstr[beg]}, end_row{rowstr[end]};
 				
 				// colidx elements are not stored in ascending order as in rowstr
@@ -1178,9 +1267,12 @@ static void conj_grad(int colidx[],
 	 * at this point, r contains A.z
 	 * ---------------------------------------------------------------------
 	 */
+	outerlp = 0;
 	for (int gg = 0; gg < NA; gg += generic_region_naa) {
+		if (outerlp) break;
+		
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa);
+		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
 
 		#pragma oss task weakin(x[gg;region_per_node_naa],		\
 					r[gg;region_per_node_naa])		\
@@ -1196,9 +1288,12 @@ static void conj_grad(int colidx[],
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
+				if (innerlp) break;
+				
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, NA, gg+region_per_node_naa, BSIZE);
+				task_chunk(beg, end, chunk, NA, gg+region_per_node_naa, BSIZE, innerlp);
 
 				#pragma oss task in(x[beg:end-1],		\
 						    r[beg:end-1])		\
@@ -1579,8 +1674,15 @@ static void task_chunk(int& beg,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize){
-	chunk = (size - index > bsize) ? bsize : size - index;
+		const int& bsize,
+		bool& breaklp){
+	if (size - index >= 2*bsize) {
+		chunk = bsize;
+		breaklp = 0;
+	} else {
+		chunk = size - index;
+		breaklp = 1;
+	}
 	beg = index;
 	end = index + chunk;
 }
@@ -1589,8 +1691,15 @@ static void node_chunk(int& node_id,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize){
+		const int& bsize,
+		bool& breaklp){
 	static const int nodes = nanos6_get_num_cluster_nodes();
-	chunk = (size - index > bsize) ? bsize : size - index;
+	if (size - index >= 2*bsize) {
+		chunk = bsize;
+		breaklp = 0;
+	} else {
+		chunk = size - index;
+		breaklp = 1;
+	}
 	node_id = ((index / chunk) < nodes) ? index / chunk : nodes-1;
 }

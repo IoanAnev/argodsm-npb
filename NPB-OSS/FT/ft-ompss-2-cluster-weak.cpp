@@ -209,12 +209,14 @@ static void task_chunk(int& beg,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize);
+		const int& bsize,
+		bool& breaklp);
 static void node_chunk(int& node_id,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize);
+		const int& bsize,
+		bool& breaklp);
 
 /* ft */
 int main(int argc, char **argv){
@@ -415,11 +417,14 @@ static void cffts1(int is,
 	}
 
 	int generic_chunk_d3 = d3 / nanos6_get_num_cluster_nodes();
-	
+
+	bool outerlp = 0;
 	for (int gg = 0; gg < d3; gg += generic_chunk_d3) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
 		int node_id, chunk_per_node_d3;
-		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3);
+		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3, outerlp);
 
 		#pragma oss task weakin(x[gg;chunk_per_node_d3][0;d2][0;d1])		\
 				 weakout(xout[gg;chunk_per_node_d3][0;d2][0;d1])	\
@@ -433,9 +438,12 @@ static void cffts1(int is,
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE);
+				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE, innerlp);
 
 				#pragma oss task in(x[beg:end-1][0;d2][0;d1])		\
 						 out(xout[beg:end-1][0;d2][0;d1])	\
@@ -488,10 +496,13 @@ static void cffts2(int is,
 
 	int generic_chunk_d3 = d3 / nanos6_get_num_cluster_nodes();
 	
+	bool outerlp = 0;
 	for (int gg = 0; gg < d3; gg += generic_chunk_d3) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
 		int node_id, chunk_per_node_d3;
-		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3);
+		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3, outerlp);
 
 		#pragma oss task weakin(x[gg;chunk_per_node_d3][0;d2][0;d1])		\
 				 weakout(xout[gg;chunk_per_node_d3][0;d2][0;d1])	\
@@ -505,9 +516,12 @@ static void cffts2(int is,
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE);
+				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE, innerlp);
 
 				#pragma oss task in(x[beg:end-1][0;d2][0;d1])		\
 						 out(xout[beg:end-1][0;d2][0;d1]) 	\
@@ -560,10 +574,13 @@ static void cffts3(int is,
 
 	int generic_chunk_d2 = d2 / nanos6_get_num_cluster_nodes();
 	
+	bool outerlp = 0;
 	for (int gg = 0; gg < d2; gg += generic_chunk_d2) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
 		int node_id, chunk_per_node_d2;
-		node_chunk(node_id, chunk_per_node_d2, d2, gg, generic_chunk_d2);
+		node_chunk(node_id, chunk_per_node_d2, d2, gg, generic_chunk_d2, outerlp);
 
 		#pragma oss task weakin(x[0;d3][gg;chunk_per_node_d2][0;d1])		\
 				 weakout(xout[0;d3][gg;chunk_per_node_d2][0;d1])	\
@@ -577,9 +594,12 @@ static void cffts3(int is,
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int j=gg; j<gg+chunk_per_node_d2; j+=BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+chunk_per_node_d2, j, BSIZE);
+				task_chunk(beg, end, chunk, gg+chunk_per_node_d2, j, BSIZE, innerlp);
 
 				#pragma oss task in(x[0;d3][beg:end-1][0;d1])		\
 						 out(xout[0;d3][beg:end-1][0;d1])	\
@@ -728,10 +748,13 @@ static void compute_indexmap(void* pointer_twiddle,
 	double ap = - 4.0 * ALPHA * PI * PI;
 	int generic_chunk_d3 = d3 / nanos6_get_num_cluster_nodes();
 
+	bool outerlp = 0;
 	for (int gg = 0; gg < d3; gg += generic_chunk_d3) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
 		int node_id, chunk_per_node_d3;
-		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3);
+		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3, outerlp);
 
 		#pragma oss task weakout(twiddle[gg;chunk_per_node_d3][0;d2][0;d1])	\
 				 firstprivate(gg, chunk_per_node_d3, BSIZE, d2, d1,	\
@@ -744,9 +767,12 @@ static void compute_indexmap(void* pointer_twiddle,
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE);
+				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE, innerlp);
 
 				#pragma oss task out(twiddle[beg:end-1][0;d2][0;d1]) 	\
 						 firstprivate(beg, end, d2, d1, 	\
@@ -806,10 +832,13 @@ static void compute_initial_conditions(void* pointer_u0,
 	 */
 	int generic_chunk_d3 = d3 / nanos6_get_num_cluster_nodes();
 
+	bool outerlp = 0;
 	for (int gg = 0; gg < d3; gg += generic_chunk_d3) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
 		int node_id, chunk_per_node_d3;
-		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3);
+		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3, outerlp);
 
 		#pragma oss task weakin(starts[gg;chunk_per_node_d3])			\
 				 weakout(u0[gg;chunk_per_node_d3][0;d2][0;d1])		\
@@ -823,9 +852,12 @@ static void compute_initial_conditions(void* pointer_u0,
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE);
+				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE, innerlp);
 
 				#pragma oss task in(starts[beg:end-1])			\
 						 out(u0[beg:end-1][0;d2][0;d1])		\
@@ -862,10 +894,13 @@ static void evolve(void* pointer_u0,
 
 	int generic_chunk_d3 = d3 / nanos6_get_num_cluster_nodes();
 	
+	bool outerlp = 0;
 	for (int gg = 0; gg < d3; gg += generic_chunk_d3) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
 		int node_id, chunk_per_node_d3;
-		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3);
+		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3, outerlp);
 
 		#pragma oss task weakin(twiddle[gg;chunk_per_node_d3][0;d2][0;d1])	\
 				 weakinout(u0[gg;chunk_per_node_d3][0;d2][0;d1])	\
@@ -881,9 +916,12 @@ static void evolve(void* pointer_u0,
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE);
+				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE, innerlp);
 
 				#pragma oss task in(twiddle[beg:end-1][0;d2][0;d1])	\
 						 inout(u0[beg:end-1][0;d2][0;d1])	\
@@ -1086,10 +1124,13 @@ static void init_ui(void* pointer_u0,
 
 	int generic_chunk_d3 = d3 / nanos6_get_num_cluster_nodes();
 
+	bool outerlp = 0;
 	for (int gg = 0; gg < d3; gg += generic_chunk_d3) {
+		if (outerlp) break;
+
 		/* Calculate row region for each node and node_id */
 		int node_id, chunk_per_node_d3;
-		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3);
+		node_chunk(node_id, chunk_per_node_d3, d3, gg, generic_chunk_d3, outerlp);
 
 		#pragma oss task weakout(u0[gg;chunk_per_node_d3][0;d2][0;d1],		\
 					 u1[gg;chunk_per_node_d3][0;d2][0;d1],		\
@@ -1105,9 +1146,12 @@ static void init_ui(void* pointer_u0,
 				// fetch all data in one go
 			}
 
+			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
+				if (innerlp) break;
+
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE);
+				task_chunk(beg, end, chunk, gg+chunk_per_node_d3, k, BSIZE, innerlp);
 
 				#pragma oss task out(u0[beg:end-1][0;d2][0;d1],		\
 						     u1[beg:end-1][0;d2][0;d1],		\
@@ -1440,8 +1484,15 @@ static void task_chunk(int& beg,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize){
-	chunk = (size - index > bsize) ? bsize : size - index;
+		const int& bsize,
+		bool& breaklp){
+	if (size - index >= 2*bsize) {
+		chunk = bsize;
+		breaklp = 0;
+	} else {
+		chunk = size - index;
+		breaklp = 1;
+	}
 	beg = index;
 	end = index + chunk;
 }
@@ -1450,8 +1501,15 @@ static void node_chunk(int& node_id,
 		int& chunk,
 		const int& size,
 		const int& index,
-		const int& bsize){
+		const int& bsize,
+		bool& breaklp){
 	static const int nodes = nanos6_get_num_cluster_nodes();
-	chunk = (size - index > bsize) ? bsize : size - index;
-	node_id = ((index / chunk) < nodes) ? index / chunk : nodes-1;
+	if (size - index >= 2*bsize) {
+		chunk = bsize;
+		breaklp = 0;
+	} else {
+		chunk = size - index;
+		breaklp = 1;
+	}
+	node_id = (!breaklp) ? index / chunk : nodes-1;
 }

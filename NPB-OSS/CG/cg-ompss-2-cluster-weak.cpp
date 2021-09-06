@@ -1720,5 +1720,5 @@ static void node_chunk(int& node_id,
 		chunk = size - index;
 		breaklp = 1;
 	}
-	node_id = ((index / chunk) < nodes) ? index / chunk : nodes-1;
+	node_id = (!breaklp) ? index / chunk : nodes-1;
 }

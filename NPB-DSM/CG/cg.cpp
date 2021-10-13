@@ -20,7 +20,6 @@
  */
 
 #include "argo.hpp"
-#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -84,8 +83,6 @@ static double (*q);
 static double (*r);
 static double (*gnorms);
 
-static argo::globallock::cohort_lock *lock;
-
 static int workrank;
 static int numtasks;
 static int nthreads;
@@ -145,6 +142,10 @@ static void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal);
+static void gnorms_acc(double* addr,
+		double& val);
+static void gnorms_zer(double* addr);
+
 
 /* cg */
 int main(int argc, char **argv){
@@ -153,7 +154,7 @@ int main(int argc, char **argv){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(0.5*1024*1024*1024UL);
+	argo::init(500*1024*1024UL);
 	/*
 	 * -------------------------------------------------------------------------
 	 * fetch workrank, number of nodes, and number of threads
@@ -182,9 +183,8 @@ int main(int argc, char **argv){
 	p = argo::conew_array<double>(NA+2);
 	q = argo::conew_array<double>(NA+2);
 	r = argo::conew_array<double>(NA+2);
-	gnorms = argo::conew_array<double>(2);
+	gnorms = argo::conew_array<double>(2*numtasks);
 
-	lock = new argo::globallock::cohort_lock();
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -394,17 +394,14 @@ int main(int argc, char **argv){
 			#pragma omp master
 			if(timeron){timer_stop(T_CONJ_GRAD);}
 
-			#pragma omp master
+			#pragma omp single
 			{
 				norm_temp1 = 0.0;
 				norm_temp2 = 0.0;
-
-				if (workrank == 0) {
-					gnorms[0] = 0.0;
-					gnorms[1] = 0.0;
-				}
 			}
-			argo::barrier(nthreads);
+				
+			gnorms_zer(&gnorms[0]);
+			gnorms_zer(&gnorms[1]);
 
 			/*
 			 * --------------------------------------------------------------------
@@ -420,20 +417,11 @@ int main(int argc, char **argv){
 				norm_temp2 += z[j]*z[j];
 			}
 
-			#pragma omp master
-			{
-				lock->lock();
-				gnorms[0] += norm_temp1;
-				gnorms[1] += norm_temp2;
-				lock->unlock();
-			}
-			argo::barrier(nthreads);
+			gnorms_acc(&gnorms[0], norm_temp1);
+			gnorms_acc(&gnorms[1], norm_temp2);
 
 			#pragma omp single
 			{
-				norm_temp1 = gnorms[0];
-				norm_temp2 = gnorms[1];
-
 				norm_temp2 = 1.0 / sqrt(norm_temp2);
 				zeta = SHIFT + 1.0 / norm_temp1;
 			}
@@ -552,7 +540,6 @@ if (workrank == 0) {
 	argo::codelete_array(q);
 	argo::codelete_array(r);
 
-	delete lock;
 	argo::codelete_array(gnorms);
 	/*
 	 * -------------------------------------------------------------------------
@@ -589,14 +576,14 @@ static void conj_grad(int colidx[],
 	int beg_naa,  end_naa;
 	int beg_naa1, end_naa1;
 
-	distribute(beg_naa, end_naa, naa, 0, 0);
+	distribute(beg_naa , end_naa , naa  , 0, 0);
 	distribute(beg_naa1, end_naa1, naa+1, 0, 0);
 
-	distribute(beg_row, end_row, lastrow - firstrow + 1, 0, 0);
-	distribute(beg_col, end_col, lastcol - firstcol + 1, 0, 0);
+	distribute(beg_row, end_row, lastrow-firstrow+1, 0, 0);
+	distribute(beg_col, end_col, lastcol-firstcol+1, 0, 0);
 
 	cgitmax = 25;
-	#pragma omp master
+	#pragma omp single nowait
 	{
 
 		rho = 0.0;
@@ -612,12 +599,8 @@ static void conj_grad(int colidx[],
 		p[j] = r[j];
 	}
 
-	#pragma omp master
-	if (workrank == 0) {
-		gnorms[0] = 0.0;
-		gnorms[1] = 0.0;
-	}
-	argo::barrier(nthreads);
+	gnorms_zer(&gnorms[0]);
+	gnorms_zer(&gnorms[1]);
 
 	/*
 	 * --------------------------------------------------------------------
@@ -630,16 +613,7 @@ static void conj_grad(int colidx[],
 		rho += r[j]*r[j];
 	}
 
-	#pragma omp master
-	{
-		lock->lock();
-		gnorms[0] += rho;
-		lock->unlock();
-	}
-	argo::barrier(nthreads);
-
-	#pragma omp single
-		rho = gnorms[0];
+	gnorms_acc(&gnorms[0], rho);
 
 	/* the conj grad iteration loop */
 	for(cgit = 1; cgit <= cgitmax; cgit++){
@@ -657,7 +631,7 @@ static void conj_grad(int colidx[],
 		 * on the Cray t3d - overall speed of code is 1.5 times faster.
 		 */
 
-		#pragma omp master
+		#pragma omp single nowait
 		{
 			d = 0.0;
 			/*
@@ -689,20 +663,8 @@ static void conj_grad(int colidx[],
 			d += p[j]*q[j];
 		}
 
-		#pragma omp master
-		{
-			lock->lock();
-			gnorms[1] += d;
-			lock->unlock();
-		}
-
-		#pragma omp master
-		if (workrank == 0)
-			gnorms[0] = 0.0;
-		argo::barrier(nthreads);
-
-		#pragma omp single
-			d = gnorms[1];
+		gnorms_acc(&gnorms[1], d);
+		gnorms_zer(&gnorms[0]);
 
 		/*
 		 * --------------------------------------------------------------------
@@ -718,7 +680,7 @@ static void conj_grad(int colidx[],
 		 * ---------------------------------------------------------------------
 		 */
 
-		#pragma omp for
+		#pragma omp for reduction(+:rho)
 		for(j = beg_col; j < end_col; j++){
 			z[j] += alpha*p[j];
 			r[j] -= alpha*q[j];
@@ -729,24 +691,11 @@ static void conj_grad(int colidx[],
 			 * now, obtain the norm of r: first, sum squares of r elements locally...
 			 * ---------------------------------------------------------------------
 			 */
-			#pragma omp atomic
 			rho += r[j]*r[j];
 		}
 
-		#pragma omp master
-		{
-			lock->lock();
-			gnorms[0] += rho;
-			lock->unlock();
-		}
-
-		#pragma omp master
-		if (workrank == 0)
-			gnorms[1] = 0.0;
-		argo::barrier(nthreads);
-
-		#pragma omp single
-			rho = gnorms[0];
+		gnorms_acc(&gnorms[0], rho);
+		gnorms_zer(&gnorms[1]);
 
 		/*
 		 * ---------------------------------------------------------------------
@@ -794,17 +743,10 @@ static void conj_grad(int colidx[],
 		sum += suml*suml;
 	}
 
-	#pragma omp master
-	{
-		lock->lock();
-		gnorms[1] += sum;
-		lock->unlock();
-	}
-	argo::barrier(nthreads);
+	gnorms_acc(&gnorms[1], sum);
 
 	#pragma omp single
 	{
-		sum    = gnorms[1];
 		*rnorm = sqrt(sum);
 	}
 }
@@ -1170,8 +1112,28 @@ static void distribute(int& beg,
 		int& end,
 		const int& loop_size,
 		const int& beg_offset,
-    		const int& less_equal){
+		const int& less_equal){
 	int chunk = loop_size / numtasks;
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
+}
+
+static void gnorms_acc(double* addr,
+		double& val)
+{
+	#pragma omp single
+	{
+	*(addr + 2*workrank) = val;
+	argo::barrier();
+
+	for (int i = 0; i < numtasks; ++i)
+		if (i != workrank)
+			val += *(addr + 2*i);
+	}
+}
+
+static void gnorms_zer(double* addr)
+{
+	#pragma omp single
+	*(addr + 2*workrank) = 0.0;
 }

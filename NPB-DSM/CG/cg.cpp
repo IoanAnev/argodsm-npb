@@ -144,8 +144,6 @@ static void distribute(int& beg,
 		const int& less_equal);
 static void gnorms_acc(double* addr,
 		double& val);
-static void gnorms_zer(double* addr);
-
 
 /* cg */
 int main(int argc, char **argv){
@@ -399,9 +397,6 @@ int main(int argc, char **argv){
 				norm_temp1 = 0.0;
 				norm_temp2 = 0.0;
 			}
-				
-			gnorms_zer(&gnorms[0]);
-			gnorms_zer(&gnorms[1]);
 
 			/*
 			 * --------------------------------------------------------------------
@@ -599,9 +594,6 @@ static void conj_grad(int colidx[],
 		p[j] = r[j];
 	}
 
-	gnorms_zer(&gnorms[0]);
-	gnorms_zer(&gnorms[1]);
-
 	/*
 	 * --------------------------------------------------------------------
 	 * rho = r.r
@@ -664,7 +656,6 @@ static void conj_grad(int colidx[],
 		}
 
 		gnorms_acc(&gnorms[1], d);
-		gnorms_zer(&gnorms[0]);
 
 		/*
 		 * --------------------------------------------------------------------
@@ -695,7 +686,6 @@ static void conj_grad(int colidx[],
 		}
 
 		gnorms_acc(&gnorms[0], rho);
-		gnorms_zer(&gnorms[1]);
 
 		/*
 		 * ---------------------------------------------------------------------
@@ -1132,8 +1122,3 @@ static void gnorms_acc(double* addr,
 	}
 }
 
-static void gnorms_zer(double* addr)
-{
-	#pragma omp single
-	*(addr + 2*workrank) = 0.0;
-}

@@ -22,7 +22,6 @@
  */
 
 #include "argo.hpp"
-#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -132,8 +131,6 @@ static double *gsum;
 static bool *gflag;
 static bool *gflag2;
 
-static argo::globallock::cohort_lock *lock;
-
 /* function prototypes */
 void blts(int nx,
 		int ny,
@@ -203,6 +200,8 @@ void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal);
+void gsum_acc(double* addr,
+		double& val);
 
 static boolean flag[ISIZ1/2*2+1];
 static boolean flag2[ISIZ1/2*2+1];
@@ -256,13 +255,12 @@ int main(int argc, char* argv[]){
 	 * move global arrays allocation here, since this is a collective operation
 	 * -------------------------------------------------------------------------
 	 */
-	gsum=argo::conew_array<double>(5);
+	gsum=argo::conew_array<double>(5*numtasks);
 	gtv=argo::conew_array<double>(ISIZ2*(ISIZ1/2*2+1)*5);
 	
 	gflag=argo::conew_array<bool>(numtasks);
 	gflag2=argo::conew_array<bool>(numtasks);
 
-	lock=new argo::globallock::cohort_lock();
 	/*
 	 * -------------------------------------------------------------------------
 	 * continue with the local allocations
@@ -455,8 +453,6 @@ int main(int argc, char* argv[]){
 	 * deallocate data structures
 	 * -------------------------------------------------------------------------
 	 */
-	delete lock;
-		
 	argo::codelete_array(gtv);
 	argo::codelete_array(gsum);
 	argo::codelete_array(gflag);
@@ -509,7 +505,7 @@ void blts(int nx,
 
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(m=0; m<5; m++){
@@ -545,7 +541,7 @@ void blts(int nx,
 		}
 	}
 		
-	#pragma omp for nowait schedule(static)
+	#pragma omp for nowait
 	for(j=beg; j<end; j++){
 
 		if (j != beg){
@@ -748,7 +744,7 @@ void buts(int nx,
 
   	distribute(beg, end, jend-1, jst, 1);
 
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(j=end; j>=beg; j--){
 		for(i=iend-1; i>=ist; i--){
 			for(m=0; m<5; m++){
@@ -784,7 +780,7 @@ void buts(int nx,
 		}
 	}
 
-	#pragma omp for nowait schedule(static)
+	#pragma omp for nowait
 	for(j=end; j>=beg; j--){
 		
 		if (j != end){
@@ -1023,7 +1019,7 @@ void erhs(){
   	distribute(beg, end, ny, 0, 0);
 
 	for(k=0; k<nz; k++){
-		#pragma omp for schedule(static)
+		#pragma omp for
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
@@ -1035,7 +1031,7 @@ void erhs(){
 
 	for(k=0; k<nz; k++){
 		zeta=((double)k)/(nz-1);
-		#pragma omp for schedule(static)
+		#pragma omp for
 		for(j=beg; j<end; j++){
 			eta=((double)j)/(ny0-1 );
 			for(i=0; i<nx; i++){
@@ -1067,7 +1063,7 @@ void erhs(){
   	distribute(beg, end, jend, jst, 0);
 
 	for(k=1; k<nz-1; k++){
-		#pragma omp for schedule(static)
+		#pragma omp for
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=rsd[k][j][i][1];
@@ -1181,7 +1177,7 @@ void erhs(){
 	 */
   	distribute(beg, end, nz-1, 1, 0);
 
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(k=beg; k<end; k++){
 		for(i=ist; i<iend; i++){
 			for(j=0; j<ny; j++){
@@ -1296,7 +1292,7 @@ void erhs(){
 	 */
   	distribute(beg, end, jend, jst, 0);
   
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(k=0; k<nz; k++){
@@ -1494,7 +1490,7 @@ void jacld(int k){
 
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for nowait schedule(static)
+	#pragma omp for nowait
 	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			/*
@@ -1786,7 +1782,7 @@ void jacu(int k){
 
   	distribute(beg, end, jend-1, jst, 1);
 
-	#pragma omp for nowait schedule(static)
+	#pragma omp for nowait
 	for (j=end; j>=beg; j--) {
 		for (i=iend-1; i>=ist; i--) {
 			/*
@@ -2097,59 +2093,52 @@ void l2norm(int nx0,
 	 * local variables
 	 * ---------------------------------------------------------------------
 	 */
-  	int beg, end;
+	int beg, end;
 	int i, j, k, m;
-	double sum0=0.0, sum1=0.0, sum2=0.0, sum3=0.0, sum4=0.0;
+	static double sum0, sum1, sum2, sum3, sum4;
 
 	#pragma omp single
-  	for(m=0; m<5; m++){
-    		sum[m] = 0.0;
-    		if(workrank == 0){
-      			gsum[m] = 0.0;
-    		}
-  	}
-	argo::barrier(nthreads);
+	{
+		sum0 = 0.0;
+		sum1 = 0.0;
+		sum2 = 0.0;
+		sum3 = 0.0;
+		sum4 = 0.0;
+	}
 
-  	distribute(beg, end, jend, jst, 0);
+	distribute(beg, end, jend, jst, 0);
 
 	for(k=1; k<nz0-1; k++){
-		#pragma omp for nowait schedule(static)
+		#pragma omp for reduction(+:sum0, sum1, sum2, sum3, sum4)
 		for(j=beg; j<end; j++){
 			for(i=ist; i<iend; i++){
-				sum0 = sum0 + v[i][j][k][0] * v[i][j][k][0];
-				sum1 = sum1 + v[i][j][k][1] * v[i][j][k][1];
-				sum2 = sum2 + v[i][j][k][2] * v[i][j][k][2];
-				sum3 = sum3 + v[i][j][k][3] * v[i][j][k][3];
-				sum4 = sum4 + v[i][j][k][4] * v[i][j][k][4];
+				sum0 += v[i][j][k][0] * v[i][j][k][0];
+				sum1 += v[i][j][k][1] * v[i][j][k][1];
+				sum2 += v[i][j][k][2] * v[i][j][k][2];
+				sum3 += v[i][j][k][3] * v[i][j][k][3];
+				sum4 += v[i][j][k][4] * v[i][j][k][4];
 			}
 		}
 	}
 
-	#pragma omp critical
+	#pragma omp single
 	{
-		sum[0] += sum0;
-		sum[1] += sum1;
-		sum[2] += sum2;
-		sum[3] += sum3;
-		sum[4] += sum4;
+		sum[0] = sum0;
+		sum[1] = sum1;
+		sum[2] = sum2;
+		sum[3] = sum3;
+		sum[4] = sum4;
 	}
-	#pragma omp barrier  
 
-  	#pragma omp master
-  	{
-    		lock->lock();
-		gsum[0] += sum[0];
-		gsum[1] += sum[1];
-		gsum[2] += sum[2];
-		gsum[3] += sum[3];
-		gsum[4] += sum[4];
-    		lock->unlock();
-  	}
-  	argo::barrier(nthreads);
+	gsum_acc(&gsum[0], sum[0]);
+	gsum_acc(&gsum[1], sum[1]);
+	gsum_acc(&gsum[2], sum[2]);
+	gsum_acc(&gsum[3], sum[3]);
+	gsum_acc(&gsum[4], sum[4]);
 
-	#pragma omp single  
+	#pragma omp single
 	for(m=0; m<5; m++){
-		sum[m]=sqrt(gsum[m]/((nx0-2)*(ny0-2)*(nz0-2)));
+		sum[m]=sqrt(sum[m]/((nx0-2)*(ny0-2)*(nz0-2)));
 	}
 }
 
@@ -2426,7 +2415,7 @@ void rhs(){
 
 	if(timeron){timer_start(T_RHS);}
 	for(k=0; k<nz; k++){
-		#pragma omp for schedule(static)
+		#pragma omp for
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
@@ -2451,7 +2440,7 @@ void rhs(){
   	distribute(beg, end, jend, jst, 0);
 
 	for(k=1; k<nz-1; k++){
-		#pragma omp for schedule(static)
+		#pragma omp for
 		for(j=beg; j<end; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=u[k][j][i][1];
@@ -2564,7 +2553,7 @@ void rhs(){
 	 */
   	distribute(beg, end, nz-1, 1, 0);
 
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(k=beg; k<end; k++){
 		for(i=ist; i<iend; i++){
 			for(j=0; j<ny; j++){
@@ -2684,7 +2673,7 @@ void rhs(){
 	 */
   	distribute(beg, end, jend, jst, 0);
 
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(j=beg; j<end; j++){
 		for(i=ist; i<iend; i++){
 			for(k=0; k<nz; k++){
@@ -2823,7 +2812,7 @@ void setbv(){
   	distribute(beg, end, ISIZ2, 0, 0);
 
   	for(k=0; k<ISIZ3; k++){
-		#pragma omp for schedule(static)
+		#pragma omp for
     		for(j=beg; j<end; j++){
       			for(i=0; i<ISIZ1; i++){
         			for(m=0; m<5; m++){
@@ -2840,7 +2829,7 @@ void setbv(){
 	 */
   	distribute(beg, end, ny, 0, 0);
 
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(j=beg; j<end; j++){
 		for(i=0; i<nx; i++){
 			exact(i, j, 0, temp1);
@@ -2858,7 +2847,7 @@ void setbv(){
 	 */
   	distribute(beg, end, nz, 0, 0);
 
-	#pragma omp for schedule(static)
+	#pragma omp for
 	for(k=beg; k<end; k++){
 		for(i=0; i<nx; i++){
 			exact(i, 0, k, temp1);
@@ -2877,7 +2866,7 @@ void setbv(){
   	distribute(beg, end, ny, 0, 0);
   
 	for(k=0; k<nz; k++){
-		#pragma omp for schedule(static)
+		#pragma omp for
 		for(j=beg; j<end; j++){
 			exact(0, j, k, temp1);
 			exact(nx-1, j, k, temp2);
@@ -3050,7 +3039,7 @@ void setiv(){
 	
 	for(k=1; k<nz-1; k++){
 		zeta=((double)k)/(nz-1);
-		#pragma omp for schedule(static)
+		#pragma omp for
 		for(j=beg; j<end; j++){
 			eta=((double)j)/(ny0-1);
 			for(i=1; i<nx-1; i++){
@@ -3115,7 +3104,7 @@ void ssor(int niter){
 	 */
   	distribute(beg, end, ISIZ2, 0, 0);
 
-	#pragma omp parallel for firstprivate(beg, end) private(i,j,n,m) schedule(static)
+	#pragma omp parallel for firstprivate(beg, end) private(i,j,n,m)
 	for(j=beg; j<end; j++){
 		for(i=0; i<ISIZ1; i++){
 			for(n=0; n<5; n++){
@@ -3187,7 +3176,7 @@ void ssor(int niter){
 					timer_start(T_RHS);
 			}
 			for(k=1; k<nz-1; k++){
-				#pragma omp for schedule(static)
+				#pragma omp for
 				for(j=beg; j<end; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){
@@ -3316,7 +3305,7 @@ void ssor(int niter){
 			}
 
 			for(k=1; k<nz-1; k++){
-				#pragma omp for schedule(static)
+				#pragma omp for
 				for(j=beg; j<end; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){
@@ -3757,8 +3746,23 @@ void distribute(int& beg,
 		int& end,
 		const int& loop_size,
 		const int& beg_offset,
-    		const int& less_equal){
+		const int& less_equal){
 	int chunk = loop_size / numtasks;
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }
+
+void gsum_acc(double* addr,
+		double& val)
+{
+	#pragma omp single
+	{
+	*(addr + 2*workrank) = val;
+	argo::barrier();
+
+	for (int i = 0; i < numtasks; ++i)
+		if (i != workrank)
+			val += *(addr + 2*i);
+	}
+}
+

@@ -75,7 +75,7 @@
  * 	1: performs ssi/ssd in bulk mode
  * ---------------------------------------------------------------------
  */
-#define BULKY_SSID 0
+#define BULKY_SSID 1
 
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
@@ -213,7 +213,7 @@ int main(int argc, char* argv[]){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(0.5*1024*1024*1024UL);
+	argo::init(250*1024*1024UL);
 	/*
 	 * -------------------------------------------------------------------------
 	 * fetch workrank, number of nodes, and number of threads
@@ -1016,11 +1016,11 @@ void erhs(){
 	double u21km1, u31km1, u41km1, u51km1;
 	double flux[ISIZ1][5];
 
-  	distribute(beg, end, ny, 0, 0);
+  	distribute(beg, end, nz, 0, 0);
 
-	for(k=0; k<nz; k++){
-		#pragma omp for
-		for(j=beg; j<end; j++){
+	#pragma omp for
+	for(k=beg; k<end; k++){
+		for(j=0; j<ny; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
 					frct[k][j][i][m]=0.0;
@@ -1029,10 +1029,10 @@ void erhs(){
 		}
 	}
 
-	for(k=0; k<nz; k++){
+	#pragma omp for
+	for(k=beg; k<end; k++){
 		zeta=((double)k)/(nz-1);
-		#pragma omp for
-		for(j=beg; j<end; j++){
+		for(j=0; j<ny; j++){
 			eta=((double)j)/(ny0-1 );
 			for(i=0; i<nx; i++){
 				xi=((double)i)/(nx0-1);
@@ -1054,17 +1054,17 @@ void erhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * xi-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
-  	distribute(beg, end, jend, jst, 0);
+  	distribute(beg, end, nz-1, 1, 0);
 
-	for(k=1; k<nz-1; k++){
-		#pragma omp for
-		for(j=beg; j<end; j++){
+	#pragma omp for
+	for(k=beg; k<end; k++){
+		for(j=jst; j<jend; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=rsd[k][j][i][1];
 				u21=rsd[k][j][i][1]/rsd[k][j][i][0];
@@ -1169,7 +1169,7 @@ void erhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * eta-direction flux differences
@@ -1284,7 +1284,7 @@ void erhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * zeta-direction flux differences
@@ -2106,11 +2106,11 @@ void l2norm(int nx0,
 		sum4 = 0.0;
 	}
 
-	distribute(beg, end, jend, jst, 0);
+	distribute(beg, end, nz0-1, 1, 0);
 
-	for(k=1; k<nz0-1; k++){
-		#pragma omp for reduction(+:sum0, sum1, sum2, sum3, sum4)
-		for(j=beg; j<end; j++){
+	#pragma omp for reduction(+:sum0, sum1, sum2, sum3, sum4)
+	for(k=beg; k<end; k++){
+		for(j=jst; j<jend; j++){
 			for(i=ist; i<iend; i++){
 				sum0 += v[i][j][k][0] * v[i][j][k][0];
 				sum1 += v[i][j][k][1] * v[i][j][k][1];
@@ -2411,12 +2411,12 @@ void rhs(){
 	double u21km1, u31km1, u41km1, u51km1;
 	double flux[ISIZ1][5];
 
-  	distribute(beg, end, ny, 0, 0);
+  	distribute(beg, end, nz, 0, 0);
 
 	if(timeron){timer_start(T_RHS);}
-	for(k=0; k<nz; k++){
-		#pragma omp for
-		for(j=beg; j<end; j++){
+	#pragma omp for
+	for(k=beg; k<end; k++){
+		for(j=0; j<ny; j++){
 			for(i=0; i<nx; i++){
 				for(m=0; m<5; m++){
 					rsd[k][j][i][m]=-frct[k][j][i][m];
@@ -2430,18 +2430,18 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	if(timeron){timer_start(T_RHSX);}
 	/*
 	 * ---------------------------------------------------------------------
 	 * xi-direction flux differences
 	 * ---------------------------------------------------------------------
 	 */
-  	distribute(beg, end, jend, jst, 0);
+  	distribute(beg, end, nz-1, 1, 0);
 
-	for(k=1; k<nz-1; k++){
-		#pragma omp for
-		for(j=beg; j<end; j++){
+	#pragma omp for
+	for(k=beg; k<end; k++){
+		for(j=jst; j<jend; j++){
 			for(i=0; i<nx; i++){
 				flux[i][0]=u[k][j][i][1];
 				u21=u[k][j][i][1]*rho_i[k][j][i];
@@ -2543,7 +2543,7 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	if(timeron){timer_stop(T_RHSX);}
 	if(timeron){timer_start(T_RHSY);}
 	/*
@@ -2663,7 +2663,7 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	if(timeron){timer_stop(T_RHSY);}
 	if(timeron){timer_start(T_RHSZ);}
 	/*
@@ -2785,7 +2785,7 @@ void rhs(){
 			}
 		}
 	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	if(timeron){timer_stop(T_RHSZ);}
 	if(timeron){timer_stop(T_RHS);}
 }
@@ -2809,11 +2809,11 @@ void setbv(){
 	 * initialize u to zero so it is touched correctly (for first-touch)
 	 * ---------------------------------------------------------------------
 	 */
-  	distribute(beg, end, ISIZ2, 0, 0);
+  	distribute(beg, end, ISIZ3, 0, 0);
 
-  	for(k=0; k<ISIZ3; k++){
-		#pragma omp for
-    		for(j=beg; j<end; j++){
+	#pragma omp for
+  	for(k=beg; k<end; k++){
+    		for(j=0; j<ISIZ2; j++){
       			for(i=0; i<ISIZ1; i++){
         			for(m=0; m<5; m++){
           				u[k][j][i][m]=0.0;
@@ -2821,7 +2821,7 @@ void setbv(){
       			}
     		}
   	}
-  	argo::barrier(nthreads);
+	argo::barrier(nthreads);
 	/*
 	 * ---------------------------------------------------------------------
 	 * set the dependent variable values along the top and bottom faces
@@ -2863,11 +2863,11 @@ void setbv(){
 	 * set the dependent variable values along east and west faces
 	 * ---------------------------------------------------------------------
 	 */
-  	distribute(beg, end, ny, 0, 0);
+  	distribute(beg, end, nz, 0, 0);
   
-	for(k=0; k<nz; k++){
-		#pragma omp for
-		for(j=beg; j<end; j++){
+	#pragma omp for
+	for(k=beg; k<end; k++){
+		for(j=0; j<ny; j++){
 			exact(0, j, k, temp1);
 			exact(nx-1, j, k, temp2);
 			for(m=0; m<5; m++){
@@ -3035,12 +3035,12 @@ void setiv(){
 	double ue_1jk[5], ue_nx0jk[5], ue_i1k[5];
 	double ue_iny0k[5], ue_ij1[5], ue_ijnz[5];
 	
-  	distribute(beg, end, ny-1, 1, 0);
+  	distribute(beg, end, nz-1, 1, 0);
 	
-	for(k=1; k<nz-1; k++){
+	#pragma omp for
+	for(k=beg; k<end; k++){
 		zeta=((double)k)/(nz-1);
-		#pragma omp for
-		for(j=beg; j<end; j++){
+		for(j=1; j<ny-1; j++){
 			eta=((double)j)/(ny0-1);
 			for(i=1; i<nx-1; i++){
 				xi=((double)i)/(nx0-1);
@@ -3117,7 +3117,7 @@ void ssor(int niter){
 			}
 		}
 	}
-  	argo::barrier();
+	argo::barrier();
 	for(i=1;i<=T_LAST;i++){timer_clear(i);}
 
 	
@@ -3146,7 +3146,6 @@ void ssor(int niter){
 				rsdnm);
 	} /* end parallel */
 
-
 	for(i=1;i<=T_LAST;i++){timer_clear(i);}
 	timer_start(1);
 	
@@ -3169,15 +3168,15 @@ void ssor(int niter){
 			 * perform SSOR iteration
 			 * ---------------------------------------------------------------------
 			 */
-      			distribute(beg, end, jend, jst, 0);
+      			distribute(beg, end, nz-1, 1, 0);
 
 			if(timeron){
 				#pragma omp master
 					timer_start(T_RHS);
 			}
-			for(k=1; k<nz-1; k++){
-				#pragma omp for
-				for(j=beg; j<end; j++){
+			#pragma omp for
+			for(k=beg; k<end; k++){
+				for(j=jst; j<jend; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){
 							rsd[k][j][i][m]=dt*rsd[k][j][i][m];
@@ -3185,6 +3184,7 @@ void ssor(int niter){
 					}
 				}
 			}
+			argo::barrier(nthreads);
 			if(timeron){
 				#pragma omp master
 					timer_stop(T_RHS);
@@ -3297,16 +3297,16 @@ void ssor(int niter){
 			 * update the variables
 			 * ---------------------------------------------------------------------
 			 */
-      			distribute(beg, end, jend, jst, 0);
+      			distribute(beg, end, nz-1, 1, 0);
 
 			if(timeron){
 				#pragma omp master
 					timer_start(T_ADD);
 			}
 
-			for(k=1; k<nz-1; k++){
-				#pragma omp for
-				for(j=beg; j<end; j++){
+			#pragma omp for
+			for(k=beg; k<end; k++){
+				for(j=jst; j<jend; j++){
 					for(i=ist; i<iend; i++){
 						for(m=0; m<5; m++){
 							u[k][j][i][m]=u[k][j][i][m]+tmp*rsd[k][j][i][m];
@@ -3314,7 +3314,7 @@ void ssor(int niter){
 					}
 				}
 			}
-      			argo::barrier(nthreads);
+			argo::barrier(nthreads);
 			if(timeron){
 				#pragma omp master
 					timer_stop(T_ADD);

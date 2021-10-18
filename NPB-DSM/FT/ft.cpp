@@ -23,7 +23,6 @@
  */
 
 #include "argo.hpp"
-#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -125,8 +124,6 @@ static dcomplex (*u1);
 static dcomplex (*gchk);
 static double (*twiddle);
 
-static argo::globallock::cohort_lock *lock;
-
 /* function prototypes */
 static void cffts1(int is,
 		int d1,
@@ -212,6 +209,8 @@ static void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal);
+static void gchk_acc(dcomplex* addr,
+		dcomplex& val);
 
 /* ft */
 int main(int argc, char **argv){
@@ -250,8 +249,7 @@ int main(int argc, char **argv){
 	u1=argo::conew_array<dcomplex>(NTOTAL);
 	twiddle=argo::conew_array<double>(NTOTAL);
 	
-	lock=new argo::globallock::cohort_lock();
-	gchk=argo::conew_<dcomplex>(dcomplex_create(0.0, 0.0));
+	gchk=argo::conew_array<dcomplex>(numtasks);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -402,7 +400,6 @@ int main(int argc, char **argv){
 	argo::codelete_array(u1);
 	argo::codelete_array(twiddle);
 	
-	delete lock;
 	argo::codelete_array(gchk);
 	/*
 	 * -------------------------------------------------------------------------
@@ -622,13 +619,7 @@ static void checksum(int i,
 	static dcomplex chk;
 
 	#pragma omp single
-	{
 		chk = dcomplex_create(0.0, 0.0);
-		if (workrank == 0) {
-			*gchk = dcomplex_create(0.0, 0.0);
-		}
-	}
-	argo::barrier(nthreads);
 
 	distribute(beg, end, 1024, 1, 1);
 
@@ -643,21 +634,15 @@ static void checksum(int i,
 	#pragma omp critical
 		chk = dcomplex_add(chk, chk_worker);
 	#pragma omp barrier
-
-	#pragma omp master
-	{
-		lock->lock();
-		*gchk = dcomplex_add(*gchk, chk);
-		lock->unlock();
-	}
-	argo::barrier(nthreads);
+	
+	gchk_acc(gchk, chk);
 	
 	#pragma omp single
 	{
 		if (workrank == 0) {
-			*gchk = dcomplex_div2(*gchk, (double)(NTOTAL));
-			printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, gchk->real, gchk->imag);
-			sums[i] = *gchk;
+			chk = dcomplex_div2(chk, (double)(NTOTAL));
+			printf(" T =%5d     Checksum =%22.12e%22.12e\n", i, chk.real, chk.imag);
+			sums[i] = chk;
 		}
 	}
 }
@@ -1277,3 +1262,18 @@ static void distribute(int& beg,
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }
+
+static void gchk_acc(dcomplex* addr,
+		dcomplex& val)
+{
+	#pragma omp single
+	{
+	*(addr + workrank) = val;
+	argo::barrier();
+
+	for (int i = 0; i < numtasks; ++i)
+		if (i != workrank)
+			val = dcomplex_add(val, *(addr + i));
+	}
+}
+

@@ -838,7 +838,7 @@ int main(int argc, char **argv){
 	dfree<double>(alpha, 1);
 	dfree<double>(beta, 1);
 
-	exit(EXIT_SUCCESS);
+	return 0;
 }
 
 /*
@@ -1312,7 +1312,7 @@ static void conj_grad(int colidx[],
 				if (innerlp) break;
 				
 				int beg, end, chunk;
-				task_chunk(beg, end, chunk, NA, gg+region_per_node_naa, BSIZE, innerlp);
+				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 				#pragma oss task in(x[beg:end-1],		\
 						    r[beg:end-1])		\

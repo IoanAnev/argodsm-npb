@@ -152,7 +152,8 @@ int main(int argc, char **argv){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(500*1024*1024UL);
+	argo::init(128*1024*1024UL,
+	           128*1024*1024UL);
 	/*
 	 * -------------------------------------------------------------------------
 	 * fetch workrank, number of nodes, and number of threads
@@ -434,7 +435,6 @@ int main(int argc, char **argv){
 			for(j = beg_col; j < end_col; j++){
 				x[j] = norm_temp2 * z[j];
 			}
-			argo::barrier(nthreads);
 		} /* end of main iter inv pow meth */
 	} /* end parallel */
 	timer_stop(T_BENCH);

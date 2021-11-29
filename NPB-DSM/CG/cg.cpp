@@ -65,6 +65,7 @@ static int (*arow)=(int*)malloc(sizeof(int)*(NA));
 static int (*acol)=(int*)malloc(sizeof(int)*(NAZ));
 static double (*aelt)=(double*)malloc(sizeof(double)*(NAZ));
 static double (*a)=(double*)malloc(sizeof(double)*(NZ));
+static double (*p)=(double*)malloc(sizeof(double)*(NA+2));
 #endif
 static int naa;
 static int nzz;
@@ -78,7 +79,6 @@ static boolean timeron;
 
 static double (*x);
 static double (*z);
-static double (*p);
 static double (*q);
 static double (*r);
 static double (*gnorms);
@@ -179,7 +179,6 @@ int main(int argc, char **argv){
 #endif
 	x = argo::conew_array<double>(NA+2);
 	z = argo::conew_array<double>(NA+2);
-	p = argo::conew_array<double>(NA+2);
 	q = argo::conew_array<double>(NA+2);
 	r = argo::conew_array<double>(NA+2);
 	gnorms = argo::conew_array<double>(2*numtasks);
@@ -311,6 +310,10 @@ int main(int argc, char **argv){
 			q[j] = 0.0;
 			z[j] = 0.0;
 			r[j] = 0.0;
+		}
+
+		#pragma omp for nowait
+		for(j = 0; j<lastcol-firstcol+1; j++){
 			p[j] = 0.0;
 		}
 		
@@ -531,7 +534,6 @@ if (workrank == 0) {
 	 */
 	argo::codelete_array(x);
 	argo::codelete_array(z);
-	argo::codelete_array(p);
 	argo::codelete_array(q);
 	argo::codelete_array(r);
 
@@ -591,6 +593,11 @@ static void conj_grad(int colidx[],
 		q[j] = 0.0;
 		z[j] = 0.0;
 		r[j] = x[j];
+	}
+	argo::barrier(nthreads);
+
+	#pragma omp for nowait
+	for(j = 0; j < naa+1; j++){
 		p[j] = r[j];
 	}
 
@@ -700,10 +707,9 @@ static void conj_grad(int colidx[],
 		 * ---------------------------------------------------------------------
 		 */
 		#pragma omp for
-		for(j = beg_col; j < end_col; j++){
+		for(j = 0; j < lastcol-firstcol+1; j++){
 			p[j] = r[j] + beta*p[j];
 		}
-		argo::barrier(nthreads);
 	} /* end of do cgit=1, cgitmax */
 
 	/*

@@ -65,7 +65,6 @@ static int (*arow)=(int*)malloc(sizeof(int)*(NA));
 static int (*acol)=(int*)malloc(sizeof(int)*(NAZ));
 static double (*aelt)=(double*)malloc(sizeof(double)*(NAZ));
 static double (*a)=(double*)malloc(sizeof(double)*(NZ));
-static double (*p)=(double*)malloc(sizeof(double)*(NA+2));
 #endif
 static int naa;
 static int nzz;
@@ -78,9 +77,10 @@ static double tran;
 static boolean timeron;
 
 static double (*x);
-static double (*z);
+static double (*p);
 static double (*q);
 static double (*r);
+static double (*z);
 static double (*gnorms);
 
 static int workrank;
@@ -152,8 +152,8 @@ int main(int argc, char **argv){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(128*1024*1024UL,
-	           128*1024*1024UL);
+	argo::init(256*1024*1024UL,
+	           256*1024*1024UL);
 	/*
 	 * -------------------------------------------------------------------------
 	 * fetch workrank, number of nodes, and number of threads
@@ -177,10 +177,11 @@ int main(int argc, char **argv){
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
-	x = argo::conew_array<double>(NA+2);
-	z = argo::conew_array<double>(NA+2);
+	p = argo::conew_array<double>(NA+2);
 	q = argo::conew_array<double>(NA+2);
 	r = argo::conew_array<double>(NA+2);
+	x = argo::conew_array<double>(NA+2);
+	z = argo::conew_array<double>(NA+2);
 	gnorms = argo::conew_array<double>(2*numtasks);
 
 	/*
@@ -188,7 +189,7 @@ int main(int argc, char **argv){
 	 * continue with the local allocations
 	 * -------------------------------------------------------------------------
 	 */
-	int	i, j, k, it;
+	int    i, j, k, it;
 	double zeta;
 	double rnorm;
 	double norm_temp1, norm_temp2;
@@ -285,57 +286,36 @@ int main(int argc, char **argv){
 	 * ---------------------------------------------------------------------
 	 */
 	#pragma omp parallel private(it,i,j,k)	
-	{		
+	{
 		#pragma omp for nowait
-		for(j = 0; j < lastrow - firstrow + 1; j++){
+		for(j = 0; j < lastrow-firstrow+1; j++){
 			for(k = rowstr[j]; k < rowstr[j+1]; k++){
-				colidx[k] = colidx[k] - firstcol;
+				colidx[k] = colidx[k]-firstcol;
 			}
 		}
 
+		int beg_col,  end_col;
 		int beg_naa1, end_naa1;
-		distribute(beg_naa1, end_naa1, NA+1, 0, 0);
-
-		/* set starting vector to (1, 1, .... 1) */
-		#pragma omp for nowait
-		for(i = beg_naa1; i < end_naa1; i++){
-			x[i] = 1.0;
-		}
-
-		int beg_col, end_col;
-		distribute(beg_col, end_col, lastcol-firstcol+1, 0, 0);
-
-		#pragma omp for nowait
-		for(j = beg_col; j<end_col; j++){
-			q[j] = 0.0;
-			z[j] = 0.0;
-			r[j] = 0.0;
-		}
-
-		#pragma omp for nowait
-		for(j = 0; j<lastcol-firstcol+1; j++){
-			p[j] = 0.0;
-		}
 		
-		#pragma omp single
-			zeta = 0.0;
-
+		distribute(beg_naa1, end_naa1, naa+1, 0, 0);
+		distribute(beg_col, end_col, lastcol-firstcol+1, 0, 0);
+		
 		/*
 		 * -------------------------------------------------------------------
 		 * ---->
 		 * do one iteration untimed to init all code and data page tables
 		 * ----> (then reinit, start timing, to niter its)
 		 * -------------------------------------------------------------------*/
-
 		for(it = 1; it <= 1; it++){
 			/* the call to the conjugate gradient routine */
 			conj_grad(colidx, rowstr, x, z, a, p, q, r, &rnorm);
+
 			#pragma omp single
 			{
 				norm_temp1 = 0.0;
 				norm_temp2 = 0.0;
 			}
-			
+
 			/*
 			 * --------------------------------------------------------------------
 			 * zeta = shift + 1/(x.z)
@@ -346,19 +326,23 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 +=   x[j] * z[j];
-				norm_temp2 += + z[j] * z[j];
+				norm_temp1 += x[j]*z[j];
+				norm_temp2 += z[j]*z[j];
 			}
+			gnorms_acc(&gnorms[0], norm_temp1);
+			gnorms_acc(&gnorms[1], norm_temp2);
 
 			#pragma omp single
+			{
 				norm_temp2 = 1.0 / sqrt(norm_temp2);
-
-			/* normalize z to obtain x */
-			#pragma omp for
-			for(j = beg_col; j < end_col; j++){     
-				x[j] = norm_temp2 * z[j];
+				zeta = SHIFT + 1.0 / norm_temp1;
 			}
-
+			
+			/* normalize z to obtain x */
+			#pragma omp for 
+			for(j = beg_col; j < end_col; j++){
+				x[j] = norm_temp2*z[j];
+			}
 		} /* end of do one iteration untimed */
 
 		/* set starting vector to (1, 1, .... 1) */	
@@ -374,10 +358,8 @@ int main(int argc, char **argv){
 		#pragma omp master
 		{
 			timer_stop(T_INIT);
-
 			if (workrank == 0)
 				printf(" Initialization time = %15.3f seconds\n", timer_read(T_INIT));
-			
 			timer_start(T_BENCH);
 		}
 
@@ -415,7 +397,6 @@ int main(int argc, char **argv){
 				norm_temp1 += x[j]*z[j];
 				norm_temp2 += z[j]*z[j];
 			}
-
 			gnorms_acc(&gnorms[0], norm_temp1);
 			gnorms_acc(&gnorms[1], norm_temp2);
 
@@ -436,7 +417,7 @@ int main(int argc, char **argv){
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
-				x[j] = norm_temp2 * z[j];
+				x[j] = norm_temp2*z[j];
 			}
 		} /* end of main iter inv pow meth */
 	} /* end parallel */
@@ -532,10 +513,11 @@ if (workrank == 0) {
 	 * deallocate data structures
 	 * -------------------------------------------------------------------------
 	 */
-	argo::codelete_array(x);
-	argo::codelete_array(z);
+	argo::codelete_array(p);
 	argo::codelete_array(q);
 	argo::codelete_array(r);
+	argo::codelete_array(x);
+	argo::codelete_array(z);
 
 	argo::codelete_array(gnorms);
 	/*
@@ -582,7 +564,6 @@ static void conj_grad(int colidx[],
 	cgitmax = 25;
 	#pragma omp single nowait
 	{
-
 		rho = 0.0;
 		sum = 0.0;
 	}
@@ -593,11 +574,6 @@ static void conj_grad(int colidx[],
 		q[j] = 0.0;
 		z[j] = 0.0;
 		r[j] = x[j];
-	}
-	argo::barrier(nthreads);
-
-	#pragma omp for nowait
-	for(j = 0; j < naa+1; j++){
 		p[j] = r[j];
 	}
 
@@ -611,7 +587,6 @@ static void conj_grad(int colidx[],
 	for(j = beg_col; j < end_col; j++){
 		rho += r[j]*r[j];
 	}
-
 	gnorms_acc(&gnorms[0], rho);
 
 	/* the conj grad iteration loop */
@@ -661,7 +636,6 @@ static void conj_grad(int colidx[],
 		for (j = beg_col; j < end_col; j++) {
 			d += p[j]*q[j];
 		}
-
 		gnorms_acc(&gnorms[1], d);
 
 		/*
@@ -677,7 +651,6 @@ static void conj_grad(int colidx[],
 		 * and    r = r - alpha*q
 		 * ---------------------------------------------------------------------
 		 */
-
 		#pragma omp for reduction(+:rho)
 		for(j = beg_col; j < end_col; j++){
 			z[j] += alpha*p[j];
@@ -691,7 +664,6 @@ static void conj_grad(int colidx[],
 			 */
 			rho += r[j]*r[j];
 		}
-
 		gnorms_acc(&gnorms[0], rho);
 
 		/*
@@ -707,9 +679,10 @@ static void conj_grad(int colidx[],
 		 * ---------------------------------------------------------------------
 		 */
 		#pragma omp for
-		for(j = 0; j < lastcol-firstcol+1; j++){
+		for(j = beg_col; j < end_col; j++){
 			p[j] = r[j] + beta*p[j];
 		}
+		argo::barrier(nthreads);
 	} /* end of do cgit=1, cgitmax */
 
 	/*
@@ -735,10 +708,9 @@ static void conj_grad(int colidx[],
 	 */
 	#pragma omp for reduction(+:sum)
 	for(j = beg_col; j < end_col; j++){
-		suml   = x[j] - r[j];
+		suml = x[j]-r[j];
 		sum += suml*suml;
 	}
-
 	gnorms_acc(&gnorms[1], sum);
 
 	#pragma omp single

@@ -48,6 +48,9 @@
 #define T_CONJ_GRAD 	2
 #define T_LAST 		3
 
+// each chunk is padded by:
+#define pad             512
+
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static int colidx[NZ];
@@ -177,12 +180,12 @@ int main(int argc, char **argv){
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
-	p = argo::conew_array<double>(NA+2);
-	q = argo::conew_array<double>(NA+2);
-	r = argo::conew_array<double>(NA+2);
-	x = argo::conew_array<double>(NA+2);
-	z = argo::conew_array<double>(NA+2);
-	gnorms = argo::conew_array<double>(2*numtasks);
+	p = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
+	q = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
+	r = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
+	x = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
+	z = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
+	gnorms = argo::conew_array<double>(numtasks*pad);       // ok
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -326,8 +329,8 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 += x[j]*z[j];
-				norm_temp2 += z[j]*z[j];
+				norm_temp1 += x[j+workrank*pad]*z[j+workrank*pad];
+				norm_temp2 += z[j+workrank*pad]*z[j+workrank*pad];
 			}
 			gnorms_acc(&gnorms[0], norm_temp1);
 			gnorms_acc(&gnorms[1], norm_temp2);
@@ -341,14 +344,14 @@ int main(int argc, char **argv){
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
-				x[j] = norm_temp2*z[j];
+				x[j+workrank*pad] = norm_temp2*z[j+workrank*pad];
 			}
 		} /* end of do one iteration untimed */
 
 		/* set starting vector to (1, 1, .... 1) */	
 		#pragma omp for
 		for(i = beg_naa1; i < end_naa1; i++){
-			x[i] = 1.0;
+			x[i+workrank*pad] = 1.0;
 		}
 
 		#pragma omp single
@@ -394,8 +397,8 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 += x[j]*z[j];
-				norm_temp2 += z[j]*z[j];
+				norm_temp1 += x[j+workrank*pad]*z[j+workrank*pad];
+				norm_temp2 += z[j+workrank*pad]*z[j+workrank*pad];
 			}
 			gnorms_acc(&gnorms[0], norm_temp1);
 			gnorms_acc(&gnorms[1], norm_temp2);
@@ -417,7 +420,7 @@ int main(int argc, char **argv){
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
-				x[j] = norm_temp2*z[j];
+				x[j+workrank*pad] = norm_temp2*z[j+workrank*pad];
 			}
 		} /* end of main iter inv pow meth */
 	} /* end parallel */
@@ -571,10 +574,10 @@ static void conj_grad(int colidx[],
 	/* initialize the CG algorithm */
 	#pragma omp for
 	for(j = beg_naa1; j < end_naa1; j++){
-		q[j] = 0.0;
-		z[j] = 0.0;
-		r[j] = x[j];
-		p[j] = r[j];
+		q[j+workrank*pad] = 0.0;
+		z[j+workrank*pad] = 0.0;
+		r[j+workrank*pad] = x[j+workrank*pad];
+		p[j+workrank*pad] = r[j+workrank*pad];
 	}
 
 	/*
@@ -585,7 +588,7 @@ static void conj_grad(int colidx[],
 	 */
 	#pragma omp for reduction(+:rho)
 	for(j = beg_col; j < end_col; j++){
-		rho += r[j]*r[j];
+		rho += r[j+workrank*pad]*r[j+workrank*pad];
 	}
 	gnorms_acc(&gnorms[0], rho);
 
@@ -621,9 +624,10 @@ static void conj_grad(int colidx[],
 		for(j = beg_row; j < end_row; j++){
 			suml = 0.0;
 			for(k = rowstr[j]; k < rowstr[j+1]; k++){
-				suml += a[k]*p[colidx[k]];
+				int chunks_home = colidx[k] / ((naa+1)/numtasks);
+				suml += a[k]*p[colidx[k]+chunks_home*pad];
 			}
-			q[j] = suml;
+			q[j+workrank*pad] = suml;
 		}
 
 		/*
@@ -634,7 +638,7 @@ static void conj_grad(int colidx[],
 
 		#pragma omp for reduction(+:d)
 		for (j = beg_col; j < end_col; j++) {
-			d += p[j]*q[j];
+			d += p[j+workrank*pad]*q[j+workrank*pad];
 		}
 		gnorms_acc(&gnorms[1], d);
 
@@ -653,8 +657,8 @@ static void conj_grad(int colidx[],
 		 */
 		#pragma omp for reduction(+:rho)
 		for(j = beg_col; j < end_col; j++){
-			z[j] += alpha*p[j];
-			r[j] -= alpha*q[j];
+			z[j+workrank*pad] += alpha*p[j+workrank*pad];
+			r[j+workrank*pad] -= alpha*q[j+workrank*pad];
 			
 			/*
 			 * ---------------------------------------------------------------------
@@ -662,7 +666,7 @@ static void conj_grad(int colidx[],
 			 * now, obtain the norm of r: first, sum squares of r elements locally...
 			 * ---------------------------------------------------------------------
 			 */
-			rho += r[j]*r[j];
+			rho += r[j+workrank*pad]*r[j+workrank*pad];
 		}
 		gnorms_acc(&gnorms[0], rho);
 
@@ -680,7 +684,7 @@ static void conj_grad(int colidx[],
 		 */
 		#pragma omp for
 		for(j = beg_col; j < end_col; j++){
-			p[j] = r[j] + beta*p[j];
+			p[j+workrank*pad] = r[j+workrank*pad] + beta*p[j+workrank*pad];
 		}
 		argo::barrier(nthreads);
 	} /* end of do cgit=1, cgitmax */
@@ -696,9 +700,10 @@ static void conj_grad(int colidx[],
 	for(j = beg_row; j < end_row; j++){
 		suml = 0.0;
 		for(k = rowstr[j]; k < rowstr[j+1]; k++){
-			suml += a[k]*z[colidx[k]];
+			int chunks_home = colidx[k] / ((naa+1)/numtasks);
+			suml += a[k]*z[colidx[k]+chunks_home*pad];
 		}
-		r[j] = suml;
+		r[j+workrank*pad] = suml;
 	}
 
 	/*
@@ -708,7 +713,7 @@ static void conj_grad(int colidx[],
 	 */
 	#pragma omp for reduction(+:sum)
 	for(j = beg_col; j < end_col; j++){
-		suml = x[j]-r[j];
+		suml = x[j+workrank*pad]-r[j+workrank*pad];
 		sum += suml*suml;
 	}
 	gnorms_acc(&gnorms[1], sum);
@@ -1091,12 +1096,12 @@ static void gnorms_acc(double* addr,
 {
 	#pragma omp single
 	{
-	*(addr + 2*workrank) = val;
-	argo::barrier();
+		*(addr + workrank*pad) = val;
+		argo::barrier();
 
-	for (int i = 0; i < numtasks; ++i)
-		if (i != workrank)
-			val += *(addr + 2*i);
+		for (int i = 0; i < numtasks; ++i)
+			if (i != workrank)
+				val += *(addr + i*pad);
 	}
 }
 

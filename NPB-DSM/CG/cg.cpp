@@ -625,6 +625,8 @@ static void conj_grad(int colidx[],
 			suml = 0.0;
 			for(k = rowstr[j]; k < rowstr[j+1]; k++){
 				int chunks_home = colidx[k] / ((naa+1)/numtasks);
+				if (chunks_home > numtasks-1)
+					chunks_home = numtasks-1;
 				suml += a[k]*p[colidx[k]+chunks_home*pad];
 			}
 			q[j+workrank*pad] = suml;
@@ -701,6 +703,8 @@ static void conj_grad(int colidx[],
 		suml = 0.0;
 		for(k = rowstr[j]; k < rowstr[j+1]; k++){
 			int chunks_home = colidx[k] / ((naa+1)/numtasks);
+			if (chunks_home > numtasks-1)
+				chunks_home = numtasks-1;
 			suml += a[k]*z[colidx[k]+chunks_home*pad];
 		}
 		r[j+workrank*pad] = suml;

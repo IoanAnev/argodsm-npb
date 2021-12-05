@@ -87,12 +87,20 @@ static int workrank;
 static int numtasks;
 static int nthreads;
 
+// 0: work on aligned chunks
+// 1: pad-based distribution
+#define DISTRIBUTION_TYPE 0
+
 #define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
 #define unaligned_chunk ((NA+2) / (numtasks))
 #define aligned_chunk ALIGN_UP((unaligned_chunk), 512)
-
 #define pad ((aligned_chunk) - (unaligned_chunk))
+
+#if DISTRIBUTION_TYPE == 0
+#define at(index, wrank) (index)
+#else
 #define at(index, wrank) ((wrank == 0) ? (index) : ((index)+((wrank)*(pad))))
+#endif
 
 /* function prototypes */
 static void conj_grad(int colidx[],
@@ -184,12 +192,21 @@ int main(int argc, char **argv){
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
-	p = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
-	q = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
-	r = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
-	x = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
-	z = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
-	gnorms = argo::conew_array<double>(numtasks*512);       // ok
+
+#if DISTRIBUTION_TYPE == 0
+	p = argo::conew_array<double>(NA+2);
+	q = argo::conew_array<double>(NA+2);
+	r = argo::conew_array<double>(NA+2);
+	x = argo::conew_array<double>(NA+2);
+	z = argo::conew_array<double>(NA+2);
+#else
+	p = argo::conew_array<double>(NA+2 + (numtasks-1)*pad);
+	q = argo::conew_array<double>(NA+2 + (numtasks-1)*pad);
+	r = argo::conew_array<double>(NA+2 + (numtasks-1)*pad);
+	x = argo::conew_array<double>(NA+2 + (numtasks-1)*pad);
+	z = argo::conew_array<double>(NA+2 + (numtasks-1)*pad);
+#endif
+	gnorms = argo::conew_array<double>(numtasks*512);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -628,10 +645,14 @@ static void conj_grad(int colidx[],
 		for(j = beg_row; j < end_row; j++){
 			suml = 0.0;
 			for(k = rowstr[j]; k < rowstr[j+1]; k++){
+#if DISTRIBUTION_TYPE == 0
+				suml += a[k]*p[colidx[k]];
+#else
 				int chunks_home = colidx[k] / unaligned_chunk;
 				if (chunks_home > numtasks-1)
 					chunks_home = numtasks-1;
 				suml += a[k]*p[colidx[k]+chunks_home*pad];
+#endif
 			}
 			q[at(j, workrank)] = suml;
 		}
@@ -706,10 +727,14 @@ static void conj_grad(int colidx[],
 	for(j = beg_row; j < end_row; j++){
 		suml = 0.0;
 		for(k = rowstr[j]; k < rowstr[j+1]; k++){
+#if DISTRIBUTION_TYPE == 0
+			suml += a[k]*z[colidx[k]];
+#else
 			int chunks_home = colidx[k] / unaligned_chunk;
 			if (chunks_home > numtasks-1)
 				chunks_home = numtasks-1;
 			suml += a[k]*z[colidx[k]+chunks_home*pad];
+#endif
 		}
 		r[at(j, workrank)] = suml;
 	}
@@ -1094,7 +1119,11 @@ static void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal){
+#if DISTRIBUTION_TYPE == 0
+	int chunk = aligned_chunk;
+#else
 	int chunk = unaligned_chunk;
+#endif
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }

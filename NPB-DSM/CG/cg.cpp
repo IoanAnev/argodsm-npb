@@ -48,9 +48,6 @@
 #define T_CONJ_GRAD 	2
 #define T_LAST 		3
 
-// each chunk is padded by:
-#define pad             512
-
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static int colidx[NZ];
@@ -89,6 +86,13 @@ static double (*gnorms);
 static int workrank;
 static int numtasks;
 static int nthreads;
+
+#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
+#define unaligned_chunk ((NA+2) / (numtasks))
+#define aligned_chunk ALIGN_UP((unaligned_chunk), 512)
+
+#define pad ((aligned_chunk) - (unaligned_chunk))
+#define at(index, wrank) ((wrank == 0) ? (index) : ((index)+((wrank)*(pad))))
 
 /* function prototypes */
 static void conj_grad(int colidx[],
@@ -185,7 +189,7 @@ int main(int argc, char **argv){
 	r = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
 	x = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
 	z = argo::conew_array<double>(NA+2 + (numtasks-1)*pad); // ok
-	gnorms = argo::conew_array<double>(numtasks*pad);       // ok
+	gnorms = argo::conew_array<double>(numtasks*512);       // ok
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -329,8 +333,8 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 += x[j+workrank*pad]*z[j+workrank*pad];
-				norm_temp2 += z[j+workrank*pad]*z[j+workrank*pad];
+				norm_temp1 += x[at(j, workrank)]*z[at(j, workrank)];
+				norm_temp2 += z[at(j, workrank)]*z[at(j, workrank)];
 			}
 			gnorms_acc(&gnorms[0], norm_temp1);
 			gnorms_acc(&gnorms[1], norm_temp2);
@@ -344,14 +348,14 @@ int main(int argc, char **argv){
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
-				x[j+workrank*pad] = norm_temp2*z[j+workrank*pad];
+				x[at(j, workrank)] = norm_temp2*z[at(j, workrank)];
 			}
 		} /* end of do one iteration untimed */
 
 		/* set starting vector to (1, 1, .... 1) */	
 		#pragma omp for
 		for(i = beg_naa1; i < end_naa1; i++){
-			x[i+workrank*pad] = 1.0;
+			x[at(i, workrank)] = 1.0;
 		}
 
 		#pragma omp single
@@ -397,8 +401,8 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 += x[j+workrank*pad]*z[j+workrank*pad];
-				norm_temp2 += z[j+workrank*pad]*z[j+workrank*pad];
+				norm_temp1 += x[at(j, workrank)]*z[at(j, workrank)];
+				norm_temp2 += z[at(j, workrank)]*z[at(j, workrank)];
 			}
 			gnorms_acc(&gnorms[0], norm_temp1);
 			gnorms_acc(&gnorms[1], norm_temp2);
@@ -420,7 +424,7 @@ int main(int argc, char **argv){
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
-				x[j+workrank*pad] = norm_temp2*z[j+workrank*pad];
+				x[at(j, workrank)] = norm_temp2*z[at(j, workrank)];
 			}
 		} /* end of main iter inv pow meth */
 	} /* end parallel */
@@ -574,10 +578,10 @@ static void conj_grad(int colidx[],
 	/* initialize the CG algorithm */
 	#pragma omp for
 	for(j = beg_naa1; j < end_naa1; j++){
-		q[j+workrank*pad] = 0.0;
-		z[j+workrank*pad] = 0.0;
-		r[j+workrank*pad] = x[j+workrank*pad];
-		p[j+workrank*pad] = r[j+workrank*pad];
+		q[at(j, workrank)] = 0.0;
+		z[at(j, workrank)] = 0.0;
+		r[at(j, workrank)] = x[at(j, workrank)];
+		p[at(j, workrank)] = r[at(j, workrank)];
 	}
 
 	/*
@@ -588,7 +592,7 @@ static void conj_grad(int colidx[],
 	 */
 	#pragma omp for reduction(+:rho)
 	for(j = beg_col; j < end_col; j++){
-		rho += r[j+workrank*pad]*r[j+workrank*pad];
+		rho += r[at(j, workrank)]*r[at(j, workrank)];
 	}
 	gnorms_acc(&gnorms[0], rho);
 
@@ -624,12 +628,12 @@ static void conj_grad(int colidx[],
 		for(j = beg_row; j < end_row; j++){
 			suml = 0.0;
 			for(k = rowstr[j]; k < rowstr[j+1]; k++){
-				int chunks_home = colidx[k] / ((naa+1)/numtasks);
+				int chunks_home = colidx[k] / unaligned_chunk;
 				if (chunks_home > numtasks-1)
 					chunks_home = numtasks-1;
 				suml += a[k]*p[colidx[k]+chunks_home*pad];
 			}
-			q[j+workrank*pad] = suml;
+			q[at(j, workrank)] = suml;
 		}
 
 		/*
@@ -640,7 +644,7 @@ static void conj_grad(int colidx[],
 
 		#pragma omp for reduction(+:d)
 		for (j = beg_col; j < end_col; j++) {
-			d += p[j+workrank*pad]*q[j+workrank*pad];
+			d += p[at(j, workrank)]*q[at(j, workrank)];
 		}
 		gnorms_acc(&gnorms[1], d);
 
@@ -659,8 +663,8 @@ static void conj_grad(int colidx[],
 		 */
 		#pragma omp for reduction(+:rho)
 		for(j = beg_col; j < end_col; j++){
-			z[j+workrank*pad] += alpha*p[j+workrank*pad];
-			r[j+workrank*pad] -= alpha*q[j+workrank*pad];
+			z[at(j, workrank)] += alpha*p[at(j, workrank)];
+			r[at(j, workrank)] -= alpha*q[at(j, workrank)];
 			
 			/*
 			 * ---------------------------------------------------------------------
@@ -668,7 +672,7 @@ static void conj_grad(int colidx[],
 			 * now, obtain the norm of r: first, sum squares of r elements locally...
 			 * ---------------------------------------------------------------------
 			 */
-			rho += r[j+workrank*pad]*r[j+workrank*pad];
+			rho += r[at(j, workrank)]*r[at(j, workrank)];
 		}
 		gnorms_acc(&gnorms[0], rho);
 
@@ -686,7 +690,7 @@ static void conj_grad(int colidx[],
 		 */
 		#pragma omp for
 		for(j = beg_col; j < end_col; j++){
-			p[j+workrank*pad] = r[j+workrank*pad] + beta*p[j+workrank*pad];
+			p[at(j, workrank)] = r[at(j, workrank)] + beta*p[at(j, workrank)];
 		}
 		argo::barrier(nthreads);
 	} /* end of do cgit=1, cgitmax */
@@ -702,12 +706,12 @@ static void conj_grad(int colidx[],
 	for(j = beg_row; j < end_row; j++){
 		suml = 0.0;
 		for(k = rowstr[j]; k < rowstr[j+1]; k++){
-			int chunks_home = colidx[k] / ((naa+1)/numtasks);
+			int chunks_home = colidx[k] / unaligned_chunk;
 			if (chunks_home > numtasks-1)
 				chunks_home = numtasks-1;
 			suml += a[k]*z[colidx[k]+chunks_home*pad];
 		}
-		r[j+workrank*pad] = suml;
+		r[at(j, workrank)] = suml;
 	}
 
 	/*
@@ -717,7 +721,7 @@ static void conj_grad(int colidx[],
 	 */
 	#pragma omp for reduction(+:sum)
 	for(j = beg_col; j < end_col; j++){
-		suml = x[j+workrank*pad]-r[j+workrank*pad];
+		suml = x[at(j, workrank)]-r[at(j, workrank)];
 		sum += suml*suml;
 	}
 	gnorms_acc(&gnorms[1], sum);
@@ -1090,7 +1094,7 @@ static void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal){
-	int chunk = loop_size / numtasks;
+	int chunk = unaligned_chunk;
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }
@@ -1100,12 +1104,12 @@ static void gnorms_acc(double* addr,
 {
 	#pragma omp single
 	{
-		*(addr + workrank*pad) = val;
+		*(addr + workrank*512) = val;
 		argo::barrier();
 
 		for (int i = 0; i < numtasks; ++i)
 			if (i != workrank)
-				val += *(addr + i*pad);
+				val += *(addr + i*512);
 	}
 }
 

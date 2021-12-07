@@ -52,6 +52,10 @@
 #define T_LAST 3
 #define BSIZE_UNIT 512
 
+// undef: fetch tasks disabled
+//   def: fetch tasks  enabled
+// #define ENABLE_FETCH_TASKS
+
 /* local array allocations (nanos6)   */
 int *colidx;
 int *rowstr;
@@ -77,6 +81,7 @@ double *rho0;
 /* global variables (def)  */
 static int naa;
 static int nzz;
+static int nazz;
 static int BSIZE;
 static int firstrow;
 static int lastrow;
@@ -90,6 +95,8 @@ static boolean timeron;
 static int node_id;
 static int generic_region_naa ,  generic_region_naa_1;
 static int region_per_node_naa, region_per_node_naa_1;
+
+#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
 
 /* function prototypes */
 static void conj_grad(int colidx[],
@@ -165,16 +172,16 @@ int main(int argc, char **argv){
 
 	/*
 	 * ---------------------------------------------------------------------
-	 * local array allocations
+	 * "local" array allocations
 	 * ---------------------------------------------------------------------
 	 */
-	colidx = lmalloc<int>(NZ);
-	rowstr = lmalloc<int>(NA+1);
-	iv     = lmalloc<int>(NA);
-	arow   = lmalloc<int>(NA);
-	acol   = lmalloc<int>(NAZ);
-	aelt   = lmalloc<double>(NAZ);
-	a      = lmalloc<double>(NZ);
+	colidx = dmalloc<int>(NZ);
+	rowstr = dmalloc<int>(NA+1);
+	iv     = dmalloc<int>(NA);
+	arow   = dmalloc<int>(NA);
+	acol   = dmalloc<int>(NAZ);
+	aelt   = dmalloc<double>(NAZ);
+	a      = dmalloc<double>(NZ);
 	
 	/*
 	 * ---------------------------------------------------------------------
@@ -269,14 +276,23 @@ int main(int argc, char **argv){
 	printf(" Iterations: %11d\n", NITER);
 	printf(" Task granularity: %5d\n", BSIZE);
 
-	naa = NA;
-	nzz = NZ;
+	naa  = NA;
+	nzz  = NZ;
+	nazz = NAZ;
 
 	/* initialize random number generator */
 	tran    = 314159265.0;
 	amult   = 1220703125.0;
 	randlc( &tran, amult );
 
+	#pragma oss task inout(colidx[0;nzz  ],	\
+			       rowstr[0;naa+1],	\
+			       iv    [0;naa  ],	\
+			       arow  [0;naa  ],	\
+			       acol  [0;nazz ],	\
+			       aelt  [0;nazz ],	\
+			       a     [0;nzz  ])	\
+			 node(nanos6_cluster_no_offload)
 	makea(naa, 
 			nzz, 
 			a, 
@@ -301,45 +317,10 @@ int main(int argc, char **argv){
 	 * to local, i.e., (0 --> lastcol-firstcol)
 	 * ---------------------------------------------------------------------
 	 */
-	bool outerlp = 0;
-	/*
-	for(int j = 0; j < NA; j += BSIZE){
-		if (outerlp) break;
-
-		int beg, end, chunk;
-		task_chunk(beg, end, chunk, NA, j, BSIZE, outerlp);
-		int beg_row{rowstr[beg]}, end_row{rowstr[end]};
-
-		#pragma oss task inout(colidx[beg_row:end_row-1])		\
-				 firstprivate(beg_row, end_row, firstcol)	\
-				 node(nanos6_cluster_no_offload)
-		for(int k = beg_row; k < end_row; k++){
-			colidx[k] -= firstcol;
-		}
-	}
-	*/
-        
-	/* Send necessary lmalloced data to all nodes */
-        for (int j = 0; j < nanos6_get_num_cluster_nodes(); j++){
-                #pragma oss task weakin(a[0;nzz],               \
-                                        colidx[0;nzz],          \
-                                        rowstr[0;naa+1])        \
-                                 node(j)
-                {
-                        #pragma oss task in(a[0;nzz],           \
-                                            colidx[0;nzz],      \
-                                            rowstr[0;naa+1])    \
-                                         node(nanos6_cluster_no_offload)
-                        {
-                                // send lmalloced data to node `j`
-                        }
-                }
-        }
-
 	/* Calculate generic region for each node */
-	generic_region_naa_1 = (NA+1) / nanos6_get_num_cluster_nodes();
+	generic_region_naa_1 = ALIGN_UP((NA+1) / nanos6_get_num_cluster_nodes(), 512);
 
-	outerlp = 0;
+	bool outerlp = 0;
 	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
 		if (outerlp) break;
 
@@ -351,11 +332,13 @@ int main(int argc, char **argv){
 				 firstprivate(gg, region_per_node_naa_1, BSIZE)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task out(x[gg;region_per_node_naa_1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			/* set starting vector to (1, 1, .... 1) */
 			bool innerlp = 0;
@@ -376,7 +359,7 @@ int main(int argc, char **argv){
 	}
 
 	/* Calculate generic region for each node */
-	generic_region_naa   =  NA    / nanos6_get_num_cluster_nodes();
+	generic_region_naa = ALIGN_UP(NA / nanos6_get_num_cluster_nodes(), 512);
 
 	outerlp = 0;
 	for (int gg = 0; gg < NA; gg += generic_region_naa) {
@@ -392,6 +375,7 @@ int main(int argc, char **argv){
 			         firstprivate(gg, region_per_node_naa, BSIZE)	\
 			         node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task out(q[gg;region_per_node_naa],		\
 					     z[gg;region_per_node_naa],		\
 					     r[gg;region_per_node_naa],		\
@@ -400,6 +384,7 @@ int main(int argc, char **argv){
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -464,6 +449,7 @@ int main(int argc, char **argv){
 					 firstprivate(gg, region_per_node_naa, BSIZE)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(x[gg;region_per_node_naa],		\
 						    z[gg;region_per_node_naa])		\
 						 inout(*norm_temp1, *norm_temp2)	\
@@ -471,6 +457,7 @@ int main(int argc, char **argv){
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -508,12 +495,14 @@ int main(int argc, char **argv){
 					 firstprivate(gg, region_per_node_naa, BSIZE)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(z[gg;region_per_node_naa], *norm_temp2)	\
 						 out(x[gg;region_per_node_naa])			\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -547,11 +536,13 @@ int main(int argc, char **argv){
 				 firstprivate(gg, region_per_node_naa_1, BSIZE)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task out(x[gg;region_per_node_naa_1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			/* set starting vector to (1, 1, .... 1) */
 			bool innerlp = 0;
@@ -620,6 +611,7 @@ int main(int argc, char **argv){
 					 firstprivate(gg, region_per_node_naa, BSIZE)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(x[gg;region_per_node_naa],		\
 						    z[gg;region_per_node_naa])		\
 						 inout(*norm_temp1, *norm_temp2)	\
@@ -627,6 +619,7 @@ int main(int argc, char **argv){
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -673,12 +666,14 @@ int main(int argc, char **argv){
 					 firstprivate(gg, region_per_node_naa, BSIZE)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(z[gg;region_per_node_naa], *norm_temp2)	\
 						 out(x[gg;region_per_node_naa])			\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -794,16 +789,16 @@ int main(int argc, char **argv){
 
 	/*
 	 * ---------------------------------------------------------------------
-	 * local array deallocations
+	 * "local" array deallocations
 	 * ---------------------------------------------------------------------
 	 */
-	lfree<int>(colidx, NZ);
-	lfree<int>(rowstr, NA+1);
-	lfree<int>(iv, NA);
-	lfree<int>(arow, NA);
-	lfree<int>(acol, NAZ);
-	lfree<double>(aelt, NAZ);
-	lfree<double>(a, NZ);
+	dfree<int>(colidx, NZ);
+	dfree<int>(rowstr, NA+1);
+	dfree<int>(iv, NA);
+	dfree<int>(arow, NA);
+	dfree<int>(acol, NAZ);
+	dfree<double>(aelt, NAZ);
+	dfree<double>(a, NZ);
 	
 	/*
 	 * ---------------------------------------------------------------------
@@ -881,6 +876,7 @@ static void conj_grad(int colidx[],
 				 firstprivate(gg, region_per_node_naa_1, BSIZE)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(x[gg;region_per_node_naa_1])	\
 					 inout(r[gg;region_per_node_naa_1])	\
 					 out(q[gg;region_per_node_naa_1],	\
@@ -890,6 +886,7 @@ static void conj_grad(int colidx[],
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
@@ -933,12 +930,14 @@ static void conj_grad(int colidx[],
 				 firstprivate(gg, region_per_node_naa, BSIZE)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(r[gg;region_per_node_naa])		\
 					 inout(*rho)				\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -1008,6 +1007,7 @@ static void conj_grad(int colidx[],
 						      nzz, beg_col_out, end_col_out)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(rowstr[gg;region_per_node_naa+1],	\
 						    colidx[beg_row_out:end_row_out-1],	\
 						    a[beg_row_out:end_row_out-1],	\
@@ -1017,6 +1017,7 @@ static void conj_grad(int colidx[],
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -1066,6 +1067,7 @@ static void conj_grad(int colidx[],
 					 firstprivate(gg, region_per_node_naa, BSIZE)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(p[gg;region_per_node_naa],		\
 						    q[gg;region_per_node_naa])		\
 						 inout(*d)				\
@@ -1073,6 +1075,7 @@ static void conj_grad(int colidx[],
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -1122,6 +1125,7 @@ static void conj_grad(int colidx[],
 					 firstprivate(gg, region_per_node_naa, BSIZE)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(p[gg;region_per_node_naa],		\
 						    q[gg;region_per_node_naa], *alpha)	\
 						 inout(z[gg;region_per_node_naa],	\
@@ -1130,6 +1134,7 @@ static void conj_grad(int colidx[],
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -1186,12 +1191,14 @@ static void conj_grad(int colidx[],
 					 firstprivate(gg, region_per_node_naa, BSIZE)	\
 					 node(node_id)
 			{
+#ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(r[gg;region_per_node_naa], *beta)	\
 						 inout(p[gg;region_per_node_naa])	\
 					    	 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
 				}
+#endif
 
 				bool innerlp = 0;
 				for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -1241,6 +1248,7 @@ static void conj_grad(int colidx[],
 					      nzz, beg_col_out, end_col_out)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(rowstr[gg;region_per_node_naa+1],	\
 					    colidx[beg_row_out:end_row_out-1],	\
 					    a[beg_row_out:end_row_out-1],	\
@@ -1250,6 +1258,7 @@ static void conj_grad(int colidx[],
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){
@@ -1299,6 +1308,7 @@ static void conj_grad(int colidx[],
 				 firstprivate(gg, region_per_node_naa, BSIZE)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(x[gg;region_per_node_naa],		\
 					    r[gg;region_per_node_naa])		\
 					 inout(*sum)				\
@@ -1306,6 +1316,7 @@ static void conj_grad(int colidx[],
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int j = gg; j < gg+region_per_node_naa; j += BSIZE){

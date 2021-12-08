@@ -22,6 +22,7 @@
  *      Ioannis Anevlavis <ioannis.anevlavis@etascale.com>
  */
 
+#include <cassert>
 #include <algorithm>
 #include "../common/memory.hpp"
 #include "../common/npb-CPP.hpp"
@@ -97,6 +98,7 @@ static int generic_region_naa ,  generic_region_naa_1;
 static int region_per_node_naa, region_per_node_naa_1;
 
 #define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
+#define ALIGN_DOWN(size, align) ((size) & ~((align) - 1))
 
 /* function prototypes */
 static void conj_grad(int colidx[],
@@ -318,7 +320,7 @@ int main(int argc, char **argv){
 	 * ---------------------------------------------------------------------
 	 */
 	/* Calculate generic region for each node */
-	generic_region_naa_1 = ALIGN_UP((NA+1) / nanos6_get_num_cluster_nodes(), 512);
+	generic_region_naa_1 = ALIGN_DOWN((NA+1) / nanos6_get_num_cluster_nodes(), 512);
 
 	bool outerlp = 0;
 	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
@@ -359,7 +361,10 @@ int main(int argc, char **argv){
 	}
 
 	/* Calculate generic region for each node */
-	generic_region_naa = ALIGN_UP(NA / nanos6_get_num_cluster_nodes(), 512);
+	generic_region_naa = ALIGN_DOWN(NA / nanos6_get_num_cluster_nodes(), 512);
+
+	/* Chunks have to be equal to avoid write misses */
+	assert (generic_region_naa_1 == generic_region_naa);
 
 	outerlp = 0;
 	for (int gg = 0; gg < NA; gg += generic_region_naa) {

@@ -93,12 +93,30 @@ static double tran;
 static boolean timeron;
 
 /* global variables (weak) */
+static int nodes;
 static int node_id;
-static int generic_region_naa ,  generic_region_naa_1;
-static int region_per_node_naa, region_per_node_naa_1;
+static int region_per_node_naa;
+static int region_per_node_naa_1;
+
+inline uint32_t flp2(uint32_t x)
+{
+	   x = x | (x >>  1);
+	   x = x | (x >>  2);
+	   x = x | (x >>  4);
+	   x = x | (x >>  8);
+	   x = x | (x >> 16);
+	return x - (x >>  1);
+}
 
 #define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
 #define ALIGN_DOWN(size, align) ((size) & ~((align) - 1))
+
+#define unaligned_chunk ((NA+2) / (nodes))
+#define aligned_down_chunk ALIGN_DOWN((unaligned_chunk), 512)
+#define power_of_two_chunk flp2(unaligned_chunk)
+
+#define aligned_chunk ((nodes*512 <= NA+1) ? (aligned_down_chunk) : (power_of_two_chunk))
+#define remainder_chunk ((NA+1) - (nodes)*(aligned_chunk))
 
 /* function prototypes */
 static void conj_grad(int colidx[],
@@ -109,7 +127,8 @@ static void conj_grad(int colidx[],
 		double p[],
 		double q[],
 		double r[],
-		double* rnorm);
+		double* rnorm,
+		int dist_table[]);
 static int icnvrt(double x,
 		int ipwr2);
 static void makea(int n,
@@ -157,34 +176,13 @@ static void task_chunk(int& beg,
 		const int& index,
 		const int& bsize,
 		bool& breaklp);
-static void node_chunk(int& node_id,
+static void node_chunk(int node_id,
+		int& beg,
 		int& chunk,
 		const int& size,
-		const int& index,
-		const int& bsize,
-		bool& breaklp);
-
+		int dist_table[]);
 /* cg */
 int main(int argc, char **argv){
-	char class_npb;
-	double t, tmax, zeta_verify_value;
-
-	double *zeta, *rnorm;
-	double *norm_temp1, *norm_temp2;
-
-	/*
-	 * ---------------------------------------------------------------------
-	 * "local" array allocations
-	 * ---------------------------------------------------------------------
-	 */
-	colidx = dmalloc<int>(NZ);
-	rowstr = dmalloc<int>(NA+1);
-	iv     = dmalloc<int>(NA);
-	arow   = dmalloc<int>(NA);
-	acol   = dmalloc<int>(NAZ);
-	aelt   = dmalloc<double>(NAZ);
-	a      = dmalloc<double>(NZ);
-	
 	/*
 	 * ---------------------------------------------------------------------
 	 * global array allocations
@@ -201,10 +199,10 @@ int main(int argc, char **argv){
 	 * global scalar allocations
 	 * ---------------------------------------------------------------------
 	 */
-	norm_temp1 = dmalloc<double>(1);
-	norm_temp2 = dmalloc<double>(1);
-	zeta       = dmalloc<double>(1);
-	rnorm      = dmalloc<double>(1);
+	double *norm_temp1 = dmalloc<double>(1);
+	double *norm_temp2 = dmalloc<double>(1);
+	double *zeta       = dmalloc<double>(1);
+	double *rnorm      = dmalloc<double>(1);
 
 	/*
 	 * --------------------------------------------------------------------
@@ -218,10 +216,51 @@ int main(int argc, char **argv){
 	alpha = dmalloc<double>(1);
 	beta  = dmalloc<double>(1);
 
+	/*
+	 * ---------------------------------------------------------------------
+	 * "local" array allocations
+	 * ---------------------------------------------------------------------
+	 */
+	colidx = dmalloc<int>(NZ);
+	rowstr = dmalloc<int>(NA+1);
+	iv     = dmalloc<int>(NA);
+	arow   = dmalloc<int>(NA);
+	acol   = dmalloc<int>(NAZ);
+	aelt   = dmalloc<double>(NAZ);
+	a      = dmalloc<double>(NZ);
+
+	/*
+	 * --------------------------------------------------------------------
+	 * continue with the local allocations
+	 * --------------------------------------------------------------------
+	 */
+	char class_npb;
+	double t, tmax, zeta_verify_value;
+
 	if (argc > 1) {
 		BSIZE = atoi(argv[1]);
 	} else {
 		BSIZE = BSIZE_UNIT;
+	}
+
+	/*
+	 * ---------------------------------------------------------------------
+	 * fetch number of nodes and create distribution table
+	 * ---------------------------------------------------------------------
+	 */
+	nodes = nanos6_get_num_cluster_nodes();
+	
+	int dist_table[nodes];
+	int min_chunk_size = BSIZE;
+	int remainder = remainder_chunk;
+	
+	dist_table[0] = 0;
+	for (int i = 1; i < nodes; ++i) {
+		if (remainder >= min_chunk_size) {
+			dist_table[i] = dist_table[i-1] + aligned_chunk + min_chunk_size;
+			remainder -= min_chunk_size;
+		} else
+			dist_table[i] = dist_table[i-1] + aligned_chunk;
 	}
 
 	char *t_names[T_LAST];
@@ -319,15 +358,10 @@ int main(int argc, char **argv){
 	 * to local, i.e., (0 --> lastcol-firstcol)
 	 * ---------------------------------------------------------------------
 	 */
-	/* Calculate generic region for each node */
-	generic_region_naa_1 = ALIGN_DOWN((NA+1) / nanos6_get_num_cluster_nodes(), 512);
-
-	bool outerlp = 0;
-	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
-		if (outerlp) break;
-
+	int gg;
+	for (int rank = 0; rank < nodes; ++rank) {
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1, outerlp);
+		node_chunk(rank, gg, region_per_node_naa_1, NA+1, dist_table);
 
 		/* Spawn a task for the whole chunk and bind to `node_id` */
 		#pragma oss task weakout(x[gg;region_per_node_naa_1])		\
@@ -360,18 +394,9 @@ int main(int argc, char **argv){
 		}
 	}
 
-	/* Calculate generic region for each node */
-	generic_region_naa = ALIGN_DOWN(NA / nanos6_get_num_cluster_nodes(), 512);
-
-	/* Chunks have to be equal to avoid write misses */
-	assert (generic_region_naa_1 == generic_region_naa);
-
-	outerlp = 0;
-	for (int gg = 0; gg < NA; gg += generic_region_naa) {
-		if (outerlp) break;
-
+	for (int rank = 0; rank < nodes; ++rank) {
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+		node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 		#pragma oss task weakout(q[gg;region_per_node_naa],		\
 				         z[gg;region_per_node_naa],		\
@@ -425,7 +450,7 @@ int main(int argc, char **argv){
 	 * -------------------------------------------------------------------*/
 	for(int it = 1; it <= 1; it++){
 		/* the call to the conjugate gradient routine */
-		conj_grad(colidx, rowstr, x, z, a, p, q, r, rnorm);
+		conj_grad(colidx, rowstr, x, z, a, p, q, r, rnorm, dist_table);
 		
 		#pragma oss task out(*norm_temp1, *norm_temp2)
 		{
@@ -441,12 +466,9 @@ int main(int argc, char **argv){
 		 * so, first: (z.z)
 		 * --------------------------------------------------------------------
 		 */
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-			
+		for (int rank = 0; rank < nodes; ++rank) {			
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(x[gg;region_per_node_naa],		\
 						z[gg;region_per_node_naa])		\
@@ -488,12 +510,9 @@ int main(int argc, char **argv){
 			*norm_temp2 = 1.0 / sqrt(*norm_temp2);
 
 		/* normalize z to obtain x */
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-
+		for (int rank = 0; rank < nodes; ++rank) {
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(z[gg;region_per_node_naa], *norm_temp2)	\
 					 weakout(x[gg;region_per_node_naa])		\
@@ -529,12 +548,9 @@ int main(int argc, char **argv){
 	} /* end of do one iteration untimed */
 
 	/* set starting vector to (1, 1, .... 1) */
-	outerlp = 0;
-	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
-		if (outerlp) break;
-
+	for (int rank = 0; rank < nodes; ++rank) {
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1, outerlp);
+		node_chunk(rank, gg, region_per_node_naa_1, NA+1, dist_table);
 
 		/* Spawn a task for the whole chunk and bind to `node_id` */
 		#pragma oss task weakout(x[gg;region_per_node_naa_1])		\
@@ -586,7 +602,7 @@ int main(int argc, char **argv){
 	for(int it = 1; it <= NITER; it++){
 		/* the call to the conjugate gradient routine */
 		if(timeron){timer_start(T_CONJ_GRAD);}
-		conj_grad(colidx, rowstr, x, z, a, p, q, r, rnorm);
+		conj_grad(colidx, rowstr, x, z, a, p, q, r, rnorm, dist_table);
 		if(timeron){timer_stop(T_CONJ_GRAD);}
 
 		#pragma oss task out(*norm_temp1, *norm_temp2)
@@ -603,12 +619,9 @@ int main(int argc, char **argv){
 		 * so, first: (z.z)
 		 * --------------------------------------------------------------------
 		 */
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-
+		for (int rank = 0; rank < nodes; ++rank) {
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(x[gg;region_per_node_naa],		\
 						z[gg;region_per_node_naa])		\
@@ -659,12 +672,9 @@ int main(int argc, char **argv){
 		printf("    %5d       %20.14e%20.13e\n", it, *rnorm, *zeta);
 
 		/* normalize z to obtain x */
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-
+		for (int rank = 0; rank < nodes; ++rank) {
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(z[gg;region_per_node_naa], *norm_temp2)	\
 					 weakout(x[gg;region_per_node_naa])		\
@@ -855,7 +865,9 @@ static void conj_grad(int colidx[],
 		double p[],
 		double q[],
 		double r[],
-		double* rnorm){
+		double* rnorm,
+		int dist_table[]){
+	int gg;
 	int cgit, cgitmax;
 
 	cgitmax = 25;
@@ -866,12 +878,9 @@ static void conj_grad(int colidx[],
 	}
 
 	/* initialize the CG algorithm */
-	bool outerlp = 0;
-	for (int gg = 0; gg < NA+1; gg += generic_region_naa_1) {
-		if (outerlp) break;
-
+	for (int rank = 0; rank < nodes; ++rank) {
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa_1, NA+1, gg, generic_region_naa_1, outerlp);
+		node_chunk(rank, gg, region_per_node_naa_1, NA+1, dist_table);
 
 		#pragma oss task weakin(x[gg;region_per_node_naa_1])		\
 				 weakinout(r[gg;region_per_node_naa_1])		\
@@ -923,12 +932,9 @@ static void conj_grad(int colidx[],
 	 * now, obtain the norm of r: First, sum squares of r elements locally...
 	 * --------------------------------------------------------------------
 	 */
-	outerlp = 0;
-	for (int gg = 0; gg < NA; gg += generic_region_naa) {
-		if (outerlp) break;
-
+	for (int rank = 0; rank < nodes; ++rank) {
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+		node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 		#pragma oss task weakin(r[gg;region_per_node_naa])		\
 				 weakinout(*rho)				\
@@ -990,12 +996,9 @@ static void conj_grad(int colidx[],
 			*rho = 0.0;
 		}
 
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-			
+		for (int rank = 0; rank < nodes; ++rank) {
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 			int beg_row_out{rowstr[gg]}, end_row_out{rowstr[gg+region_per_node_naa]};
 			
 			/* colidx elements are not stored in ascending order as in rowstr */
@@ -1059,12 +1062,9 @@ static void conj_grad(int colidx[],
 		 * obtain p.q
 		 * --------------------------------------------------------------------
 		 */
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-			
+		for (int rank = 0; rank < nodes; ++rank) {			
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(p[gg;region_per_node_naa],		\
 						q[gg;region_per_node_naa])		\
@@ -1116,12 +1116,9 @@ static void conj_grad(int colidx[],
 		 * and    r = r - alpha*q
 		 * ---------------------------------------------------------------------
 		 */
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-			
+		for (int rank = 0; rank < nodes; ++rank) {
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(p[gg;region_per_node_naa],		\
 						q[gg;region_per_node_naa], *alpha)	\
@@ -1184,12 +1181,9 @@ static void conj_grad(int colidx[],
 		 * p = r + beta*p
 		 * ---------------------------------------------------------------------
 		 */
-		outerlp = 0;
-		for (int gg = 0; gg < NA; gg += generic_region_naa) {
-			if (outerlp) break;
-			
+		for (int rank = 0; rank < nodes; ++rank) {
 			/* Calculate row region for each node and node_id */
-			node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+			node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(r[gg;region_per_node_naa], *beta)	\
 					 weakinout(p[gg;region_per_node_naa])		\
@@ -1231,12 +1225,9 @@ static void conj_grad(int colidx[],
 	 * the partition submatrix-vector multiply
 	 * ---------------------------------------------------------------------
 	 */
-	outerlp = 0;
-	for (int gg = 0; gg < NA; gg += generic_region_naa) {
-		if (outerlp) break;
-		
+	for (int rank = 0; rank < nodes; ++rank) {
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+		node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 		int beg_row_out{rowstr[gg]}, end_row_out{rowstr[gg+region_per_node_naa]};
 		
 		/* colidx elements are not stored in ascending order as in rowstr */
@@ -1300,12 +1291,9 @@ static void conj_grad(int colidx[],
 	 * at this point, r contains A.z
 	 * ---------------------------------------------------------------------
 	 */
-	outerlp = 0;
-	for (int gg = 0; gg < NA; gg += generic_region_naa) {
-		if (outerlp) break;
-		
+	for (int rank = 0; rank < nodes; ++rank) {
 		/* Calculate row region for each node and node_id */
-		node_chunk(node_id, region_per_node_naa, NA, gg, generic_region_naa, outerlp);
+		node_chunk(rank, gg, region_per_node_naa, NA, dist_table);
 
 		#pragma oss task weakin(x[gg;region_per_node_naa],		\
 					r[gg;region_per_node_naa])		\
@@ -1722,19 +1710,14 @@ static void task_chunk(int& beg,
 	end = index + chunk;
 }
 
-static void node_chunk(int& node_id,
+static void node_chunk(int node_id,
+		int& beg,
 		int& chunk,
 		const int& size,
-		const int& index,
-		const int& bsize,
-		bool& breaklp){
-	static const int nodes = nanos6_get_num_cluster_nodes();
-	if (size - index >= 2*bsize) {
-		chunk = bsize;
-		breaklp = 0;
-	} else {
-		chunk = size - index;
-		breaklp = 1;
-	}
-	node_id = (!breaklp) ? index / chunk : nodes-1;
+		int dist_table[]){
+	beg = dist_table[node_id];
+	chunk = (node_id != nodes-1)
+		? (dist_table[node_id+1]
+		 - dist_table[node_id  ])
+		: (size - dist_table[node_id]);
 }

@@ -87,10 +87,25 @@ static int workrank;
 static int numtasks;
 static int nthreads;
 
+inline uint32_t flp2(uint32_t x)
+{
+	   x = x | (x >>  1);
+	   x = x | (x >>  2);
+	   x = x | (x >>  4);
+	   x = x | (x >>  8);
+	   x = x | (x >> 16);
+	return x - (x >>  1);
+}
+
 #define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
+#define ALIGN_DOWN(size, align) ((size) & ~((align) - 1))
+
 #define unaligned_chunk ((NA+2) / (numtasks))
-#define aligned_chunk ALIGN_UP((unaligned_chunk), 512)
-#define pad ((aligned_chunk) - (unaligned_chunk))
+#define aligned_down_chunk ALIGN_DOWN((unaligned_chunk), 512)
+#define power_of_two_chunk flp2(unaligned_chunk)
+
+#define aligned_chunk ((numtasks*512 <= NA+1) ? (aligned_down_chunk) : (power_of_two_chunk))
+#define remainder_chunk ((NA+1) - (numtasks)*(aligned_chunk))
 
 /* function prototypes */
 static void conj_grad(int colidx[],
@@ -101,7 +116,8 @@ static void conj_grad(int colidx[],
 		double p[],
 		double q[],
 		double r[],
-		double* rnorm);
+		double* rnorm,
+		int dist_table[]);
 static int icnvrt(double x,
 		int ipwr2);
 static void makea(int n,
@@ -146,7 +162,8 @@ static void distribute(int& beg,
 		int& end,
 		const int& loop_size,
 		const int& beg_offset,
-		const int& less_equal);
+		const int& less_equal,
+		int dist_table[]);
 static void gnorms_acc(double* addr,
 		double& val);
 
@@ -189,6 +206,24 @@ int main(int argc, char **argv){
 	x = argo::conew_array<double>(NA+2);
 	z = argo::conew_array<double>(NA+2);
 	gnorms = argo::conew_array<double>(numtasks*512);
+
+	/*
+	 * ---------------------------------------------------------------------
+	 * create distribution table
+	 * ---------------------------------------------------------------------
+	 */
+	int dist_table[numtasks];
+	int min_chunk_size = 512;
+	int remainder = remainder_chunk;
+	
+	dist_table[0] = 0;
+	for (int i = 1; i < numtasks; ++i) {
+		if (remainder >= min_chunk_size) {
+			dist_table[i] = dist_table[i-1] + aligned_chunk + min_chunk_size;
+			remainder -= min_chunk_size;
+		} else
+			dist_table[i] = dist_table[i-1] + aligned_chunk;
+	}
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -303,9 +338,9 @@ int main(int argc, char **argv){
 		int beg_col,  end_col;
 		int beg_naa1, end_naa1;
 		
-		distribute(beg_naa1, end_naa1, naa+1, 0, 0);
-		distribute(beg_col, end_col, lastcol-firstcol+1, 0, 0);
-		
+		distribute(beg_naa1, end_naa1, naa+1             , 0, 0, dist_table);
+		distribute(beg_col , end_col , lastcol-firstcol+1, 0, 0, dist_table);
+
 		/*
 		 * -------------------------------------------------------------------
 		 * ---->
@@ -314,7 +349,7 @@ int main(int argc, char **argv){
 		 * -------------------------------------------------------------------*/
 		for(it = 1; it <= 1; it++){
 			/* the call to the conjugate gradient routine */
-			conj_grad(colidx, rowstr, x, z, a, p, q, r, &rnorm);
+			conj_grad(colidx, rowstr, x, z, a, p, q, r, &rnorm, dist_table);
 
 			#pragma omp single
 			{
@@ -380,7 +415,7 @@ int main(int argc, char **argv){
 			/* the call to the conjugate gradient routine */
 			#pragma omp master
 			if(timeron){timer_start(T_CONJ_GRAD);}
-			conj_grad(colidx, rowstr, x, z, a, p, q, r, &rnorm);
+			conj_grad(colidx, rowstr, x, z, a, p, q, r, &rnorm, dist_table);
 			#pragma omp master
 			if(timeron){timer_stop(T_CONJ_GRAD);}
 
@@ -550,7 +585,8 @@ static void conj_grad(int colidx[],
 		double p[],
 		double q[],
 		double r[],
-		double* rnorm){
+		double* rnorm,
+		int dist_table[]){
 	int j, k;
 	int cgit, cgitmax;
 	double alpha, beta, suml;
@@ -561,11 +597,11 @@ static void conj_grad(int colidx[],
 	int beg_naa,  end_naa;
 	int beg_naa1, end_naa1;
 
-	distribute(beg_naa , end_naa , naa  , 0, 0);
-	distribute(beg_naa1, end_naa1, naa+1, 0, 0);
+	distribute(beg_naa , end_naa , naa  , 0, 0, dist_table);
+	distribute(beg_naa1, end_naa1, naa+1, 0, 0, dist_table);
 
-	distribute(beg_row, end_row, lastrow-firstrow+1, 0, 0);
-	distribute(beg_col, end_col, lastcol-firstcol+1, 0, 0);
+	distribute(beg_row, end_row, lastrow-firstrow+1, 0, 0, dist_table);
+	distribute(beg_col, end_col, lastcol-firstcol+1, 0, 0, dist_table);
 
 	cgitmax = 25;
 	#pragma omp single nowait
@@ -1086,10 +1122,11 @@ static void distribute(int& beg,
 		int& end,
 		const int& loop_size,
 		const int& beg_offset,
-		const int& less_equal){
+		const int& less_equal,
+		int dist_table[]){
 	int chunk = aligned_chunk;
-	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
-	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
+	beg = dist_table[workrank] + ((workrank == 0) ? beg_offset : less_equal);
+	end = (workrank != numtasks - 1) ? dist_table[workrank+1]  : loop_size;
 }
 
 static void gnorms_acc(double* addr,

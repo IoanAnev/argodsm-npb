@@ -57,6 +57,10 @@
 //   def: fetch tasks  enabled
 // #define ENABLE_FETCH_TASKS
 
+//   1: nanos6-mpi  optimal
+// 512: nanos6-argo optimal
+#define SCALARS_PAD 1
+
 /* local array allocations (nanos6)   */
 int *colidx;
 int *rowstr;
@@ -83,6 +87,7 @@ double *rho0;
 static int naa;
 static int nzz;
 static int nazz;
+static int SCPAD;
 static int BSIZE;
 static int firstrow;
 static int lastrow;
@@ -185,6 +190,13 @@ static void node_chunk(int node_id,
 int main(int argc, char **argv){
 	/*
 	 * ---------------------------------------------------------------------
+	 * fetch number of nodes
+	 * ---------------------------------------------------------------------
+	 */
+	nodes = nanos6_get_num_cluster_nodes();
+
+	/*
+	 * ---------------------------------------------------------------------
 	 * global array allocations
 	 * ---------------------------------------------------------------------
 	 */
@@ -199,22 +211,22 @@ int main(int argc, char **argv){
 	 * global scalar allocations
 	 * ---------------------------------------------------------------------
 	 */
-	double *norm_temp1 = dmalloc<double>(1);
-	double *norm_temp2 = dmalloc<double>(1);
-	double *zeta       = dmalloc<double>(1);
-	double *rnorm      = dmalloc<double>(1);
+	double *norm_temp1 = dmalloc<double>((nodes+1)*SCALARS_PAD);
+	double *norm_temp2 = dmalloc<double>((nodes+1)*SCALARS_PAD);
+	double *rnorm      = dmalloc<double>(SCALARS_PAD);
+	double *zeta       = dmalloc<double>(SCALARS_PAD);
 
 	/*
 	 * --------------------------------------------------------------------
 	 * global scalar allocations for the conj_grad() function
 	 * --------------------------------------------------------------------
 	 */
-	d     = dmalloc<double>(1);
-	sum   = dmalloc<double>(1);
-	rho   = dmalloc<double>(1);
-	rho0  = dmalloc<double>(1);
-	alpha = dmalloc<double>(1);
-	beta  = dmalloc<double>(1);
+	d     = dmalloc<double>((nodes+1)*SCALARS_PAD);
+	sum   = dmalloc<double>((nodes+1)*SCALARS_PAD);
+	rho   = dmalloc<double>((nodes+1)*SCALARS_PAD);
+	alpha = dmalloc<double>(SCALARS_PAD);
+	beta  = dmalloc<double>(SCALARS_PAD);
+	rho0  = dmalloc<double>(SCALARS_PAD);
 
 	/*
 	 * ---------------------------------------------------------------------
@@ -237,6 +249,8 @@ int main(int argc, char **argv){
 	char class_npb;
 	double t, tmax, zeta_verify_value;
 
+	SCPAD = SCALARS_PAD;
+
 	if (argc > 1) {
 		BSIZE = atoi(argv[1]);
 	} else {
@@ -248,8 +262,6 @@ int main(int argc, char **argv){
 	 * fetch number of nodes and create distribution table
 	 * ---------------------------------------------------------------------
 	 */
-	nodes = nanos6_get_num_cluster_nodes();
-	
 	int dist_table[nodes];
 	int min_chunk_size = BSIZE;
 	int remainder = remainder_chunk;
@@ -368,14 +380,6 @@ int main(int argc, char **argv){
 				 firstprivate(gg, region_per_node_naa_1, BSIZE)	\
 				 node(node_id)
 		{
-#ifdef ENABLE_FETCH_TASKS
-			#pragma oss task out(x[gg;region_per_node_naa_1])	\
-					 node(nanos6_cluster_no_offload)
-			{
-				// fetch all data in one go
-			}
-#endif
-
 			/* set starting vector to (1, 1, .... 1) */
 			bool innerlp = 0;
 			for (int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
@@ -405,17 +409,6 @@ int main(int argc, char **argv){
 			         firstprivate(gg, region_per_node_naa, BSIZE)	\
 			         node(node_id)
 		{
-#ifdef ENABLE_FETCH_TASKS
-			#pragma oss task out(q[gg;region_per_node_naa],		\
-					     z[gg;region_per_node_naa],		\
-					     r[gg;region_per_node_naa],		\
-					     p[gg;region_per_node_naa])		\
-					 node(nanos6_cluster_no_offload)
-			{
-				// fetch all data in one go
-			}
-#endif
-
 			bool innerlp = 0;
 			for (int j = gg; j < gg+region_per_node_naa; j += BSIZE){
 				if (innerlp) break;
@@ -438,8 +431,9 @@ int main(int argc, char **argv){
 			}
 		}
 	}
-	
-	#pragma oss task out(*zeta)
+
+	#pragma oss task out(*zeta)	\
+			 node(nanos6_cluster_no_offload)
 		*zeta = 0.0;
 
 	/*
@@ -452,10 +446,19 @@ int main(int argc, char **argv){
 		/* the call to the conjugate gradient routine */
 		conj_grad(colidx, rowstr, x, z, a, p, q, r, rnorm, dist_table);
 		
-		#pragma oss task out(*norm_temp1, *norm_temp2)
-		{
-			*norm_temp1 = 0.0;
-			*norm_temp2 = 0.0;
+		for (int node_id = 0; node_id < nodes; ++node_id) {
+			#pragma oss task weakout(norm_temp1[node_id*SCPAD;SCPAD],	\
+						 norm_temp2[node_id*SCPAD;SCPAD])	\
+					 firstprivate(node_id, SCPAD)			\
+					 node(node_id)
+				#pragma oss task out(norm_temp1[node_id*SCPAD;SCPAD],	\
+						     norm_temp2[node_id*SCPAD;SCPAD])	\
+						 firstprivate(node_id, SCPAD)		\
+						 node(nanos6_cluster_no_offload)
+				{
+					norm_temp1[node_id*SCPAD] = 0.0;
+					norm_temp2[node_id*SCPAD] = 0.0;
+				}
 		}
 		
 		/*
@@ -470,16 +473,16 @@ int main(int argc, char **argv){
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-			#pragma oss task weakin(x[gg;region_per_node_naa],		\
-						z[gg;region_per_node_naa])		\
-					 weakinout(*norm_temp1, *norm_temp2)		\
-					 firstprivate(gg, region_per_node_naa, BSIZE)	\
+			#pragma oss task weakin(x[gg;region_per_node_naa],				\
+						z[gg;region_per_node_naa])				\
+					 weakinout(norm_temp1[node_id*SCPAD;SCPAD],			\
+						   norm_temp2[node_id*SCPAD;SCPAD])			\
+					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
 				#pragma oss task in(x[gg;region_per_node_naa],		\
 						    z[gg;region_per_node_naa])		\
-						 inout(*norm_temp1, *norm_temp2)	\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -493,35 +496,45 @@ int main(int argc, char **argv){
 					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-					#pragma oss task in(x[beg:end-1],		\
-							    z[beg:end-1])		\
-							inout(*norm_temp1, *norm_temp2)	\
-							firstprivate(beg, end)		\
-							node(nanos6_cluster_no_offload)
+					#pragma oss task in(x[beg:end-1],			\
+							    z[beg:end-1])			\
+							 inout(norm_temp1[node_id*SCPAD;SCPAD],	\
+							       norm_temp2[node_id*SCPAD;SCPAD])	\
+							 firstprivate(beg, end, node_id, SCPAD)	\
+							 node(nanos6_cluster_no_offload)
 					for (int k = beg; k < end; k++){
-						*norm_temp1 += x[k] * z[k];
-						*norm_temp2 += z[k] * z[k];
+						norm_temp1[node_id*SCPAD] += x[k] * z[k];
+						norm_temp2[node_id*SCPAD] += z[k] * z[k];
 					}
 				}
 			}
 		}
 		
-		#pragma oss task inout(*norm_temp2)
-			*norm_temp2 = 1.0 / sqrt(*norm_temp2);
+		#pragma oss task in(norm_temp2[0;nodes*SCPAD])		\
+				 inout(norm_temp2[nodes*SCPAD;SCPAD])	\
+				 firstprivate(nodes, SCPAD)		\
+				 node(nanos6_cluster_no_offload)
+		{
+			norm_temp2[nodes*SCPAD] = 0.0;
+			for (int node_id = 0; node_id < nodes; ++node_id) {
+				norm_temp2[nodes*SCPAD] += norm_temp2[node_id*SCPAD];
+			}
+			norm_temp2[nodes*SCPAD] = 1.0 / sqrt(norm_temp2[nodes*SCPAD]);
+		}
 
 		/* normalize z to obtain x */
 		for (int node_id = 0; node_id < nodes; ++node_id) {
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-			#pragma oss task weakin(z[gg;region_per_node_naa], *norm_temp2)	\
-					 weakout(x[gg;region_per_node_naa])		\
-					 firstprivate(gg, region_per_node_naa, BSIZE)	\
+			#pragma oss task weakin(z[gg;region_per_node_naa], 				\
+						norm_temp2[nodes*SCPAD;SCPAD])				\
+					 weakout(x[gg;region_per_node_naa])				\
+					 firstprivate(gg, region_per_node_naa, BSIZE, nodes, SCPAD)	\
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
-				#pragma oss task in(z[gg;region_per_node_naa], *norm_temp2)	\
-						 out(x[gg;region_per_node_naa])			\
+				#pragma oss task in(z[gg;region_per_node_naa])	\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -535,12 +548,13 @@ int main(int argc, char **argv){
 					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-					#pragma oss task in(z[beg:end-1], *norm_temp2)	\
-							 out(x[beg:end-1]) 		\
-							 firstprivate(beg, end)		\
+					#pragma oss task in(z[beg:end-1],			\
+							    norm_temp2[nodes*SCPAD;SCPAD])	\
+							 out(x[beg:end-1]) 			\
+							 firstprivate(beg, end, nodes, SCPAD)	\
 							 node(nanos6_cluster_no_offload)
 					for (int k = beg; k < end; k++){
-						x[k] = *norm_temp2 * z[k];
+						x[k] = norm_temp2[nodes*SCPAD] * z[k];
 					}
 				}
 			}
@@ -557,14 +571,6 @@ int main(int argc, char **argv){
 				 firstprivate(gg, region_per_node_naa_1, BSIZE)	\
 				 node(node_id)
 		{
-#ifdef ENABLE_FETCH_TASKS
-			#pragma oss task out(x[gg;region_per_node_naa_1])	\
-					 node(nanos6_cluster_no_offload)
-			{
-				// fetch all data in one go
-			}
-#endif
-
 			/* set starting vector to (1, 1, .... 1) */
 			bool innerlp = 0;
 			for (int j = gg; j < gg+region_per_node_naa_1; j += BSIZE){
@@ -583,7 +589,8 @@ int main(int argc, char **argv){
 		}
 	}
 
-	#pragma oss task out(*zeta)
+	#pragma oss task out(*zeta)	\
+			 node(nanos6_cluster_no_offload)
 		*zeta = 0.0;
 	
 	#pragma oss taskwait
@@ -605,10 +612,19 @@ int main(int argc, char **argv){
 		conj_grad(colidx, rowstr, x, z, a, p, q, r, rnorm, dist_table);
 		if(timeron){timer_stop(T_CONJ_GRAD);}
 
-		#pragma oss task out(*norm_temp1, *norm_temp2)
-		{
-			*norm_temp1 = 0.0;
-			*norm_temp2 = 0.0;
+		for (int node_id = 0; node_id < nodes; ++node_id) {
+			#pragma oss task weakout(norm_temp1[node_id*SCPAD;SCPAD],	\
+						 norm_temp2[node_id*SCPAD;SCPAD])	\
+					 firstprivate(node_id, SCPAD)			\
+					 node(node_id)
+				#pragma oss task out(norm_temp1[node_id*SCPAD;SCPAD],	\
+						     norm_temp2[node_id*SCPAD;SCPAD])	\
+						 firstprivate(node_id, SCPAD)		\
+						 node(nanos6_cluster_no_offload)
+				{
+					norm_temp1[node_id*SCPAD] = 0.0;
+					norm_temp2[node_id*SCPAD] = 0.0;
+				}
 		}
 
 		/*
@@ -623,16 +639,16 @@ int main(int argc, char **argv){
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-			#pragma oss task weakin(x[gg;region_per_node_naa],		\
-						z[gg;region_per_node_naa])		\
-					 weakinout(*norm_temp1, *norm_temp2)		\
-					 firstprivate(gg, region_per_node_naa, BSIZE)	\
+			#pragma oss task weakin(x[gg;region_per_node_naa],				\
+						z[gg;region_per_node_naa])				\
+					 weakinout(norm_temp1[node_id*SCPAD;SCPAD],			\
+						   norm_temp2[node_id*SCPAD;SCPAD])			\
+					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
-				#pragma oss task in(x[gg;region_per_node_naa],		\
-						    z[gg;region_per_node_naa])		\
-						 inout(*norm_temp1, *norm_temp2)	\
+				#pragma oss task in(x[gg;region_per_node_naa],	\
+						    z[gg;region_per_node_naa])	\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -646,25 +662,36 @@ int main(int argc, char **argv){
 					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-					#pragma oss task in(x[beg:end-1],		\
-							    z[beg:end-1])		\
-							inout(*norm_temp1, *norm_temp2)	\
-							firstprivate(beg, end)		\
-							node(nanos6_cluster_no_offload)
+					#pragma oss task in(x[beg:end-1],			\
+							    z[beg:end-1])			\
+							 inout(norm_temp1[node_id*SCPAD;SCPAD],	\
+							       norm_temp2[node_id*SCPAD;SCPAD])	\
+							 firstprivate(beg, end, node_id, SCPAD)	\
+							 node(nanos6_cluster_no_offload)
 					for (int k = beg; k < end; k++){
-						*norm_temp1 += x[k] * z[k];
-						*norm_temp2 += z[k] * z[k];
+						norm_temp1[node_id*SCPAD] += x[k] * z[k];
+						norm_temp2[node_id*SCPAD] += z[k] * z[k];
 					}
 				}
 			}
 		}
 
-		#pragma oss task in(*norm_temp1)	\
-				 inout(*norm_temp2) 	\
-				 out(*zeta)
+		#pragma oss task in(norm_temp1[0;nodes*SCPAD],		\
+				    norm_temp2[0;nodes*SCPAD])		\
+				 inout(norm_temp1[nodes*SCPAD;SCPAD],	\
+				       norm_temp2[nodes*SCPAD;SCPAD])	\
+				 out(*zeta)				\
+				 firstprivate(nodes, SCPAD)		\
+				 node(nanos6_cluster_no_offload)
 		{
-			*norm_temp2 = 1.0 / sqrt(*norm_temp2);
-			*zeta = SHIFT + 1.0 / *norm_temp1;
+			norm_temp1[nodes*SCPAD] = 0.0;
+			norm_temp2[nodes*SCPAD] = 0.0;
+			for (int node_id = 0; node_id < nodes; ++node_id) {
+				norm_temp1[nodes*SCPAD] += norm_temp1[node_id*SCPAD];
+				norm_temp2[nodes*SCPAD] += norm_temp2[node_id*SCPAD];
+			}
+			norm_temp2[nodes*SCPAD] = 1.0 / sqrt(norm_temp2[nodes*SCPAD]);
+			*zeta = SHIFT + 1.0 / norm_temp1[nodes*SCPAD];
 		}
 
 		if(it==1){printf("\n   iteration           ||r||                 zeta\n");}
@@ -676,14 +703,14 @@ int main(int argc, char **argv){
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-			#pragma oss task weakin(z[gg;region_per_node_naa], *norm_temp2)	\
-					 weakout(x[gg;region_per_node_naa])		\
-					 firstprivate(gg, region_per_node_naa, BSIZE)	\
+			#pragma oss task weakin(z[gg;region_per_node_naa],				\
+						norm_temp2[nodes*SCPAD;SCPAD])				\
+					 weakout(x[gg;region_per_node_naa])				\
+					 firstprivate(gg, region_per_node_naa, BSIZE, nodes, SCPAD)	\
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
-				#pragma oss task in(z[gg;region_per_node_naa], *norm_temp2)	\
-						 out(x[gg;region_per_node_naa])			\
+				#pragma oss task in(z[gg;region_per_node_naa])	\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -697,12 +724,13 @@ int main(int argc, char **argv){
 					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-					#pragma oss task in(z[beg:end-1], *norm_temp2)	\
-							 out(x[beg:end-1]) 		\
-							 firstprivate(beg, end)		\
+					#pragma oss task in(z[beg:end-1],			\
+							    norm_temp2[nodes*SCPAD;SCPAD])	\
+							 out(x[beg:end-1]) 			\
+							 firstprivate(beg, end, nodes, SCPAD)	\
 							 node(nanos6_cluster_no_offload)
 					for (int k = beg; k < end; k++){
-						x[k] = *norm_temp2 * z[k];
+						x[k] = norm_temp2[nodes*SCPAD] * z[k];
 					}
 				}
 			}
@@ -871,10 +899,19 @@ static void conj_grad(int colidx[],
 	int cgit, cgitmax;
 
 	cgitmax = 25;
-	#pragma oss task out(*rho, *sum)
-	{
-		*rho = 0.0;
-		*sum = 0.0;
+	for (int node_id = 0; node_id < nodes; ++node_id) {
+		#pragma oss task weakout(rho[node_id*SCPAD;SCPAD],	\
+					 sum[node_id*SCPAD;SCPAD])	\
+				 firstprivate(node_id, SCPAD)		\
+				 node(node_id)
+			#pragma oss task out(rho[node_id*SCPAD;SCPAD],	\
+					     sum[node_id*SCPAD;SCPAD])	\
+					 firstprivate(node_id, SCPAD)	\
+					 node(nanos6_cluster_no_offload)
+			{
+				rho[node_id*SCPAD] = 0.0;
+				sum[node_id*SCPAD] = 0.0;
+			}
 	}
 
 	/* initialize the CG algorithm */
@@ -892,10 +929,7 @@ static void conj_grad(int colidx[],
 		{
 #ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(x[gg;region_per_node_naa_1])	\
-					 inout(r[gg;region_per_node_naa_1])	\
-					 out(q[gg;region_per_node_naa_1],	\
-					     z[gg;region_per_node_naa_1],	\
-					     p[gg;region_per_node_naa_1])	\
+					 in(r[gg;region_per_node_naa_1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
@@ -936,14 +970,13 @@ static void conj_grad(int colidx[],
 		/* Calculate row region for each node and node_id */
 		node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-		#pragma oss task weakin(r[gg;region_per_node_naa])		\
-				 weakinout(*rho)				\
-				 firstprivate(gg, region_per_node_naa, BSIZE)	\
+		#pragma oss task weakin(r[gg;region_per_node_naa])				\
+				 weakinout(rho[node_id*SCPAD;SCPAD])				\
+				 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 				 node(node_id)
 		{
 #ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(r[gg;region_per_node_naa])		\
-					 inout(*rho)				\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
@@ -957,12 +990,12 @@ static void conj_grad(int colidx[],
 				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-				#pragma oss task in(r[beg:end-1])		\
-						 inout(*rho)			\
-						 firstprivate(beg, end)		\
+				#pragma oss task in(r[beg:end-1])			\
+						 inout(rho[node_id*SCPAD;SCPAD])	\
+						 firstprivate(beg, end, node_id, SCPAD)	\
 						 node(nanos6_cluster_no_offload)
 				for (int k = beg; k < end; k++){
-					*rho += r[k]*r[k];
+					rho[node_id*SCPAD] += r[k]*r[k];
 				}
 			}
 		}
@@ -984,16 +1017,37 @@ static void conj_grad(int colidx[],
 		 * on the Cray t3d - overall speed of code is 1.5 times faster.
 		 */
 
-		#pragma oss task inout(*rho) out(*d, *rho0)
+		#pragma oss task in(rho[0;nodes*SCPAD])		\
+				 inout(rho[nodes*SCPAD;SCPAD],	\
+				      *rho0)			\
+				 firstprivate(nodes, SCPAD)	\
+				 node(nanos6_cluster_no_offload)
 		{
-			*d = 0.0;
+			rho[nodes*SCPAD] = 0.0;
+			for (int node_id = 0; node_id < nodes; ++node_id) {
+				rho[nodes*SCPAD] += rho[node_id*SCPAD];
+			}
 			/*
 			 * --------------------------------------------------------------------
 			 * save a temporary of rho
 			 * --------------------------------------------------------------------
 			 */
-			*rho0 = *rho;
-			*rho = 0.0;
+			*rho0 = rho[nodes*SCPAD];
+		}
+
+		for (int node_id = 0; node_id < nodes; ++node_id) {
+			#pragma oss task weakout(d[node_id*SCPAD;SCPAD],	\
+						 rho[node_id*SCPAD;SCPAD])	\
+					 firstprivate(node_id, SCPAD)		\
+					 node(node_id)
+				#pragma oss task out(d[node_id*SCPAD;SCPAD],	\
+						     rho[node_id*SCPAD;SCPAD])	\
+						 firstprivate(node_id, SCPAD)	\
+						 node(nanos6_cluster_no_offload)
+				{
+					d[node_id*SCPAD] = 0.0;
+					rho[node_id*SCPAD] = 0.0;
+				}
 		}
 
 		for (int node_id = 0; node_id < nodes; ++node_id) {
@@ -1020,7 +1074,6 @@ static void conj_grad(int colidx[],
 						    colidx[beg_row_out:end_row_out-1],	\
 						    a[beg_row_out:end_row_out-1],	\
 						    p[beg_col_out:end_col_out])		\
-						 out(q[gg;region_per_node_naa])		\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -1066,16 +1119,15 @@ static void conj_grad(int colidx[],
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-			#pragma oss task weakin(p[gg;region_per_node_naa],		\
-						q[gg;region_per_node_naa])		\
-					 weakinout(*d)					\
-					 firstprivate(gg, region_per_node_naa, BSIZE)	\
+			#pragma oss task weakin(p[gg;region_per_node_naa],				\
+						q[gg;region_per_node_naa])				\
+					 weakinout(d[node_id*SCPAD;SCPAD])				\
+					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
-				#pragma oss task in(p[gg;region_per_node_naa],		\
-						    q[gg;region_per_node_naa])		\
-						 inout(*d)				\
+				#pragma oss task in(p[gg;region_per_node_naa],	\
+						    q[gg;region_per_node_naa])	\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -1089,13 +1141,13 @@ static void conj_grad(int colidx[],
 					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-					#pragma oss task in(p[beg:end-1],		\
-							    q[beg:end-1])		\
-							 inout(*d)			\
-							 firstprivate(beg, end)		\
+					#pragma oss task in(p[beg:end-1],			\
+							    q[beg:end-1])			\
+							 inout(d[node_id*SCPAD;SCPAD])		\
+							 firstprivate(beg, end, node_id, SCPAD)	\
 							 node(nanos6_cluster_no_offload)
 					for (int k = beg; k < end; k++){
-						*d += p[k]*q[k];
+						d[node_id*SCPAD] += p[k]*q[k];
 					}
 				}
 			}
@@ -1106,9 +1158,23 @@ static void conj_grad(int colidx[],
 		 * obtain alpha = rho / (p.q)
 		 * -------------------------------------------------------------------
 		 */
+		#pragma oss task in(d[0;nodes*SCPAD])		\
+				 out(d[nodes*SCPAD;SCPAD])	\
+				 firstprivate(nodes, SCPAD)	\
+				 node(nanos6_cluster_no_offload)
+		{
+			d[nodes*SCPAD] = 0.0;
+			for (int node_id = 0; node_id < nodes; ++node_id) {
+				d[nodes*SCPAD] += d[node_id*SCPAD];
+			}
+		}
+
 		// #pragma oss taskwait on(*rho, *d)
-		#pragma oss task in(*rho0, *d) out(*alpha)
-			*alpha = *rho0 / *d;
+		#pragma oss task in(*rho0, d[nodes*SCPAD;SCPAD])	\
+				 out(*alpha)				\
+				 firstprivate(nodes, SCPAD)		\
+				 node(nanos6_cluster_no_offload)
+			*alpha = *rho0 / d[nodes*SCPAD];
 			
 		/*
 		 * ---------------------------------------------------------------------
@@ -1120,18 +1186,19 @@ static void conj_grad(int colidx[],
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-			#pragma oss task weakin(p[gg;region_per_node_naa],		\
-						q[gg;region_per_node_naa], *alpha)	\
-					 weakinout(z[gg;region_per_node_naa],		\
-					 	   r[gg;region_per_node_naa], *rho)	\
-					 firstprivate(gg, region_per_node_naa, BSIZE)	\
+			#pragma oss task weakin(p[gg;region_per_node_naa],				\
+						q[gg;region_per_node_naa], *alpha)			\
+					 weakinout(z[gg;region_per_node_naa],				\
+					 	   r[gg;region_per_node_naa],				\
+						   rho[node_id*SCPAD;SCPAD])				\
+					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
-				#pragma oss task in(p[gg;region_per_node_naa],		\
-						    q[gg;region_per_node_naa], *alpha)	\
-						 inout(z[gg;region_per_node_naa],	\
-						       r[gg;region_per_node_naa], *rho)	\
+				#pragma oss task in(p[gg;region_per_node_naa],	\
+						    q[gg;region_per_node_naa],	\
+						    z[gg;region_per_node_naa],	\
+						    r[gg;region_per_node_naa])	\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -1145,11 +1212,12 @@ static void conj_grad(int colidx[],
 					int beg, end, chunk;
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-					#pragma oss task in(p[beg:end-1],		\
-							    q[beg:end-1], *alpha) 	\
-							 inout(z[beg:end-1],		\
-							       r[beg:end-1], *rho)	\
-							 firstprivate(beg, end)		\
+					#pragma oss task in(p[beg:end-1],			\
+							    q[beg:end-1], *alpha) 		\
+							 inout(z[beg:end-1],			\
+							       r[beg:end-1],			\
+							       rho[node_id*SCPAD;SCPAD])	\
+							 firstprivate(beg, end, node_id, SCPAD)	\
 							 node(nanos6_cluster_no_offload)
 					for (int k = beg; k < end; k++){
 						z[k] += *alpha*p[k];
@@ -1161,7 +1229,7 @@ static void conj_grad(int colidx[],
 						* now, obtain the norm of r: first, sum squares of r elements locally...
 						* ---------------------------------------------------------------------
 						*/
-						*rho += r[k]*r[k];
+						rho[node_id*SCPAD] += r[k]*r[k];
 					}
 				}
 			}
@@ -1171,10 +1239,24 @@ static void conj_grad(int colidx[],
 		 * ---------------------------------------------------------------------
 		 * obtain beta
 		 * ---------------------------------------------------------------------
-		 */	
+		 */
+		#pragma oss task in(rho[0;nodes*SCPAD])		\
+				 out(rho[nodes*SCPAD;SCPAD])	\
+				 firstprivate(nodes, SCPAD)	\
+				 node(nanos6_cluster_no_offload)
+		{
+			rho[nodes*SCPAD] = 0.0;
+			for (int node_id = 0; node_id < nodes; ++node_id) {
+				rho[nodes*SCPAD] += rho[node_id*SCPAD];
+			}
+		}
+
 		// #pragma oss taskwait on(*rho, *rho0)
-		#pragma oss task in(*rho, *rho0) out(*beta)
-			*beta = *rho / *rho0;
+		#pragma oss task in(rho[nodes*SCPAD;SCPAD], *rho0)	\
+				 out(*beta)				\
+				 firstprivate(nodes, SCPAD)		\
+				 node(nanos6_cluster_no_offload)
+			*beta = rho[nodes*SCPAD] / *rho0;
 
 		/*
 		 * ---------------------------------------------------------------------
@@ -1191,8 +1273,8 @@ static void conj_grad(int colidx[],
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
-				#pragma oss task in(r[gg;region_per_node_naa], *beta)	\
-						 inout(p[gg;region_per_node_naa])	\
+				#pragma oss task in(r[gg;region_per_node_naa],	\
+						    p[gg;region_per_node_naa])	\
 					    	 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -1249,7 +1331,6 @@ static void conj_grad(int colidx[],
 					    colidx[beg_row_out:end_row_out-1],	\
 					    a[beg_row_out:end_row_out-1],	\
 					    z[beg_col_out:end_col_out])		\
-					 out(r[gg;region_per_node_naa])		\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
@@ -1295,16 +1376,15 @@ static void conj_grad(int colidx[],
 		/* Calculate row region for each node and node_id */
 		node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-		#pragma oss task weakin(x[gg;region_per_node_naa],		\
-					r[gg;region_per_node_naa])		\
-				 weakinout(*sum)				\
-				 firstprivate(gg, region_per_node_naa, BSIZE)	\
+		#pragma oss task weakin(x[gg;region_per_node_naa],				\
+					r[gg;region_per_node_naa])				\
+				 weakinout(sum[node_id*SCPAD;SCPAD])				\
+				 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 				 node(node_id)
 		{
 #ifdef ENABLE_FETCH_TASKS
-			#pragma oss task in(x[gg;region_per_node_naa],		\
-					    r[gg;region_per_node_naa])		\
-					 inout(*sum)				\
+			#pragma oss task in(x[gg;region_per_node_naa],	\
+					    r[gg;region_per_node_naa])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
@@ -1318,21 +1398,36 @@ static void conj_grad(int colidx[],
 				int beg, end, chunk;
 				task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
-				#pragma oss task in(x[beg:end-1],		\
-						    r[beg:end-1])		\
-						inout(*sum)			\
-						firstprivate(beg, end)		\
+				#pragma oss task in(x[beg:end-1],			\
+						    r[beg:end-1])			\
+						inout(sum[node_id*SCPAD;SCPAD])		\
+						firstprivate(beg, end, node_id, SCPAD)	\
 						node(nanos6_cluster_no_offload)
 				for (int k = beg; k < end; k++){
 					double suml = x[k] - r[k];
-					*sum += suml*suml;
+					sum[node_id*SCPAD] += suml*suml;
 				}
 			}
 		}
 	}
+
+	#pragma oss task in(sum[0;nodes*SCPAD])		\
+			 out(sum[nodes*SCPAD;SCPAD])	\
+			 firstprivate(nodes, SCPAD)	\
+			 node(nanos6_cluster_no_offload)
+	{
+		sum[nodes*SCPAD] = 0.0;
+		for (int node_id = 0; node_id < nodes; ++node_id) {
+			sum[nodes*SCPAD] += sum[node_id*SCPAD];
+		}
+	}
+
 	// #pragma oss taskwait on(*sum)
-	#pragma oss task in(*sum) out(*rnorm)
-		*rnorm = sqrt(*sum);
+	#pragma oss task in(sum[nodes*SCPAD;SCPAD])	\
+			 out(*rnorm)			\
+			 firstprivate(nodes, SCPAD)	\
+			 node(nanos6_cluster_no_offload)
+		*rnorm = sqrt(sum[nodes*SCPAD]);
 }
 
 /*

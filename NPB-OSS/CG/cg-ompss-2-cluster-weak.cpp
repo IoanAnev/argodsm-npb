@@ -59,7 +59,7 @@
 
 //   1: nanos6-mpi  optimal
 // 512: nanos6-argo optimal
-#define SCALARS_PAD 1
+#define SCALARS_PAD 512
 
 /* local array allocations (nanos6)   */
 int *colidx;
@@ -359,6 +359,7 @@ int main(int argc, char **argv){
 			(int(*)[NONZER+1])(void*)acol, 
 			(double(*)[NONZER+1])(void*)aelt,
 			iv);
+	#pragma oss taskwait /* solves finalization issue with nanos6-argodsm */
 
 	/*
 	 * ---------------------------------------------------------------------

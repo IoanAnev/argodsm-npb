@@ -461,8 +461,8 @@ int main(int argc, char **argv){
 
 			#pragma oss task weakin(x[gg;region_per_node_naa],				\
 						z[gg;region_per_node_naa])				\
-					 weakinout(norm_temp1[node_id*SCPAD;SCPAD],			\
-						   norm_temp2[node_id*SCPAD;SCPAD])			\
+					 weakinout(norm_temp1[node_id*SCPAD],				\
+						   norm_temp2[node_id*SCPAD])				\
 					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
@@ -477,8 +477,8 @@ int main(int argc, char **argv){
 
 				#pragma oss task in(x[gg;region_per_node_naa],					\
 						    z[gg;region_per_node_naa])					\
-						    out(norm_temp1[node_id*SCPAD;SCPAD],			\
-						    norm_temp2[node_id*SCPAD;SCPAD])				\
+						    out(norm_temp1[node_id*SCPAD],				\
+						    norm_temp2[node_id*SCPAD])					\
 						    firstprivate(gg, region_per_node_naa, node_id, SCPAD)	\
 						    node(nanos6_cluster_no_offload)
 				{
@@ -496,7 +496,7 @@ int main(int argc, char **argv){
 
 		#pragma oss task in(norm_temp1[0;nodes*SCPAD],		\
 				    norm_temp2[0;nodes*SCPAD])		\
-				 out(norm_temp2[nodes*SCPAD;SCPAD])	\
+				 out(norm_temp2[nodes*SCPAD])	\
 				 out(*zeta)				\
 				 firstprivate(nodes, SCPAD)		\
 				 node(nanos6_cluster_no_offload)
@@ -517,7 +517,7 @@ int main(int argc, char **argv){
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(z[gg;region_per_node_naa],				\
-						norm_temp2[nodes*SCPAD;SCPAD])				\
+						norm_temp2[nodes*SCPAD])				\
 					 weakout(x[gg;region_per_node_naa])				\
 					 firstprivate(gg, region_per_node_naa, BSIZE, nodes, SCPAD)	\
 					 node(node_id)
@@ -538,7 +538,7 @@ int main(int argc, char **argv){
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(z[beg:end-1],			\
-							    norm_temp2[nodes*SCPAD;SCPAD])	\
+							    norm_temp2[nodes*SCPAD])		\
 							 out(x[beg:end-1]) 			\
 							 firstprivate(beg, end, nodes, SCPAD)	\
 							 node(nanos6_cluster_no_offload)
@@ -615,8 +615,8 @@ int main(int argc, char **argv){
 
 			#pragma oss task weakin(x[gg;region_per_node_naa],				\
 						z[gg;region_per_node_naa])				\
-					 weakinout(norm_temp1[node_id*SCPAD;SCPAD],			\
-						   norm_temp2[node_id*SCPAD;SCPAD])			\
+					 weakinout(norm_temp1[node_id*SCPAD],				\
+						   norm_temp2[node_id*SCPAD])				\
 					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
@@ -631,8 +631,8 @@ int main(int argc, char **argv){
 
 				#pragma oss task in(x[gg;region_per_node_naa],					\
 						    z[gg;region_per_node_naa])					\
-						    out(norm_temp1[node_id*SCPAD;SCPAD],			\
-						    norm_temp2[node_id*SCPAD;SCPAD])				\
+						    out(norm_temp1[node_id*SCPAD],				\
+						    norm_temp2[node_id*SCPAD])					\
 						    firstprivate(gg, region_per_node_naa, node_id, SCPAD)	\
 						    node(nanos6_cluster_no_offload)
 				{
@@ -650,7 +650,7 @@ int main(int argc, char **argv){
 
 		#pragma oss task in(norm_temp1[0;nodes*SCPAD],		\
 				    norm_temp2[0;nodes*SCPAD])		\
-				 out(norm_temp2[nodes*SCPAD;SCPAD])	\
+				 out(norm_temp2[nodes*SCPAD])		\
 				 out(*zeta)				\
 				 firstprivate(nodes, SCPAD)		\
 				 node(nanos6_cluster_no_offload)
@@ -677,7 +677,7 @@ int main(int argc, char **argv){
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
 			#pragma oss task weakin(z[gg;region_per_node_naa],				\
-						norm_temp2[nodes*SCPAD;SCPAD])				\
+						norm_temp2[nodes*SCPAD])				\
 					 weakout(x[gg;region_per_node_naa])				\
 					 firstprivate(gg, region_per_node_naa, BSIZE, nodes, SCPAD)	\
 					 node(node_id)
@@ -698,7 +698,7 @@ int main(int argc, char **argv){
 					task_chunk(beg, end, chunk, gg+region_per_node_naa, j, BSIZE, innerlp);
 
 					#pragma oss task in(z[beg:end-1],			\
-							    norm_temp2[nodes*SCPAD;SCPAD])	\
+							    norm_temp2[nodes*SCPAD])		\
 							 out(x[beg:end-1]) 			\
 							 firstprivate(beg, end, nodes, SCPAD)	\
 							 node(nanos6_cluster_no_offload)
@@ -927,7 +927,7 @@ static void conj_grad(int colidx[],
 		node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
 		#pragma oss task weakin(r[gg;region_per_node_naa])				\
-				 weakout(rho[node_id*SCPAD;SCPAD])				\
+				 weakout(rho[node_id*SCPAD])					\
 				 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 				 node(node_id)
 		{
@@ -940,7 +940,7 @@ static void conj_grad(int colidx[],
 #endif
 
 			#pragma oss task in(r[gg;region_per_node_naa])				\
-					 out(rho[node_id*SCPAD;SCPAD])				\
+					 out(rho[node_id*SCPAD])				\
 					 firstprivate(gg, region_per_node_naa, node_id, SCPAD)	\
 					 node(nanos6_cluster_no_offload)
 			{
@@ -970,7 +970,7 @@ static void conj_grad(int colidx[],
 		 */
 
 		#pragma oss task in(rho[0;nodes*SCPAD])		\
-				 out(rho[nodes*SCPAD;SCPAD],	\
+				 out(rho[nodes*SCPAD],		\
 				     *rho0)			\
 				 firstprivate(nodes, SCPAD)	\
 				 node(nanos6_cluster_no_offload)
@@ -1059,7 +1059,7 @@ static void conj_grad(int colidx[],
 
 			#pragma oss task weakin(p[gg;region_per_node_naa],				\
 						q[gg;region_per_node_naa])				\
-					 weakout(d[node_id*SCPAD;SCPAD])				\
+					 weakout(d[node_id*SCPAD])					\
 					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
@@ -1074,7 +1074,7 @@ static void conj_grad(int colidx[],
 
 				#pragma oss task in(p[gg;region_per_node_naa],				\
 						    q[gg;region_per_node_naa])				\
-						 out(d[node_id*SCPAD;SCPAD])				\
+						 out(d[node_id*SCPAD])					\
 						 firstprivate(gg, region_per_node_naa, node_id, SCPAD)	\
 						 node(nanos6_cluster_no_offload)
 				{
@@ -1093,7 +1093,7 @@ static void conj_grad(int colidx[],
 		 * -------------------------------------------------------------------
 		 */
 		#pragma oss task in(d[0;nodes*SCPAD])		\
-				 out(d[nodes*SCPAD;SCPAD])	\
+				 out(d[nodes*SCPAD])		\
 				 firstprivate(nodes, SCPAD)	\
 				 node(nanos6_cluster_no_offload)
 		{
@@ -1105,7 +1105,7 @@ static void conj_grad(int colidx[],
 		}
 
 		// #pragma oss taskwait on(*rho, *d)
-		#pragma oss task in(*rho0, d[nodes*SCPAD;SCPAD])	\
+		#pragma oss task in(*rho0, d[nodes*SCPAD])		\
 				 out(*alpha)				\
 				 firstprivate(nodes, SCPAD)		\
 				 node(nanos6_cluster_no_offload)
@@ -1125,7 +1125,7 @@ static void conj_grad(int colidx[],
 						q[gg;region_per_node_naa], *alpha)			\
 					 weakinout(z[gg;region_per_node_naa],				\
 					 	   r[gg;region_per_node_naa])				\
-					 weakout(rho[node_id*SCPAD;SCPAD])				\
+					 weakout(rho[node_id*SCPAD])					\
 					 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 					 node(node_id)
 			{
@@ -1160,7 +1160,7 @@ static void conj_grad(int colidx[],
 				}
 
 				#pragma oss task in(r[gg;region_per_node_naa])				\
-						 out(rho[node_id*SCPAD;SCPAD])				\
+						 out(rho[node_id*SCPAD])				\
 						 firstprivate(gg, region_per_node_naa, node_id, SCPAD)	\
 						 node(nanos6_cluster_no_offload)
 				{
@@ -1185,7 +1185,7 @@ static void conj_grad(int colidx[],
 		 * ---------------------------------------------------------------------
 		 */
 		#pragma oss task in(rho[0;nodes*SCPAD])		\
-				 out(rho[nodes*SCPAD;SCPAD])	\
+				 out(rho[nodes*SCPAD])		\
 				 firstprivate(nodes, SCPAD)	\
 				 node(nanos6_cluster_no_offload)
 		{
@@ -1197,7 +1197,7 @@ static void conj_grad(int colidx[],
 		}
 
 		// #pragma oss taskwait on(*rho, *rho0)
-		#pragma oss task in(rho[nodes*SCPAD;SCPAD], *rho0)	\
+		#pragma oss task in(rho[nodes*SCPAD], *rho0)		\
 				 out(*beta)				\
 				 firstprivate(nodes, SCPAD)		\
 				 node(nanos6_cluster_no_offload)
@@ -1323,7 +1323,7 @@ static void conj_grad(int colidx[],
 
 		#pragma oss task weakin(x[gg;region_per_node_naa],				\
 					r[gg;region_per_node_naa])				\
-				 weakout(sum[node_id*SCPAD;SCPAD])				\
+				 weakout(sum[node_id*SCPAD])					\
 				 firstprivate(gg, region_per_node_naa, BSIZE, node_id, SCPAD)	\
 				 node(node_id)
 		{
@@ -1338,7 +1338,7 @@ static void conj_grad(int colidx[],
 
 			#pragma oss task in(x[gg;region_per_node_naa],				\
 					    r[gg;region_per_node_naa])				\
-					 out(sum[node_id*SCPAD;SCPAD])				\
+					 out(sum[node_id*SCPAD])				\
 					 firstprivate(gg, region_per_node_naa, node_id, SCPAD)	\
 					 node(nanos6_cluster_no_offload)
 			{
@@ -1353,7 +1353,7 @@ static void conj_grad(int colidx[],
 	}
 
 	#pragma oss task in(sum[0;nodes*SCPAD])		\
-			 out(sum[nodes*SCPAD;SCPAD])	\
+			 out(sum[nodes*SCPAD])		\
 			 firstprivate(nodes, SCPAD)	\
 			 node(nanos6_cluster_no_offload)
 	{
@@ -1365,7 +1365,7 @@ static void conj_grad(int colidx[],
 	}
 
 	// #pragma oss taskwait on(*sum)
-	#pragma oss task in(sum[nodes*SCPAD;SCPAD])	\
+	#pragma oss task in(sum[nodes*SCPAD])		\
 			 out(*rnorm)			\
 			 firstprivate(nodes, SCPAD)	\
 			 node(nanos6_cluster_no_offload)

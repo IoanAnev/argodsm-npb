@@ -104,6 +104,10 @@
 #define T_MAX 8
 #define BSIZE_UNIT 64
 
+// undef: fetch tasks disabled
+//   def: fetch tasks  enabled
+// #define ENABLE_FETCH_TASKS
+
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static int dims[3];
@@ -431,12 +435,14 @@ static void cffts1(int is,
 				 firstprivate(gg, chunk_per_node_d3, BSIZE, is, d2, d1)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(x[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 out(xout[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
@@ -509,12 +515,14 @@ static void cffts2(int is,
 				 firstprivate(gg, chunk_per_node_d3, BSIZE, is, d2, d1)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(x[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 out(xout[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
@@ -587,12 +595,14 @@ static void cffts3(int is,
 				 firstprivate(gg, chunk_per_node_d2, BSIZE, is, d3, d1)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(x[0;d3][gg;chunk_per_node_d2][0;d1])	\
 					 out(xout[0;d3][gg;chunk_per_node_d2][0;d1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int j=gg; j<gg+chunk_per_node_d2; j+=BSIZE){
@@ -761,11 +771,13 @@ static void compute_indexmap(void* pointer_twiddle,
 				 	      ap, nzz, nyy, nxx)			\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task out(twiddle[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
@@ -845,12 +857,14 @@ static void compute_initial_conditions(void* pointer_u0,
 				 firstprivate(gg, chunk_per_node_d3, BSIZE, d2, d1, nxx)\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(starts[gg;chunk_per_node_d3])		\
 					 out(u0[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 node(nanos6_cluster_no_offload)
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
@@ -908,6 +922,7 @@ static void evolve(void* pointer_u0,
 				 firstprivate(gg, chunk_per_node_d3, BSIZE, d2, d1)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task in(twiddle[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 inout(u0[gg;chunk_per_node_d3][0;d2][0;d1])	\
 					 out(u1[gg;chunk_per_node_d3][0;d2][0;d1])	\
@@ -915,6 +930,7 @@ static void evolve(void* pointer_u0,
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){
@@ -1138,6 +1154,7 @@ static void init_ui(void* pointer_u0,
 				 firstprivate(gg, chunk_per_node_d3, BSIZE, d2, d1)	\
 				 node(node_id)
 		{
+#ifdef ENABLE_FETCH_TASKS
 			#pragma oss task out(u0[gg;chunk_per_node_d3][0;d2][0;d1],	\
 					     u1[gg;chunk_per_node_d3][0;d2][0;d1],	\
 					     twiddle[gg;chunk_per_node_d3][0;d2][0;d1])	\
@@ -1145,6 +1162,7 @@ static void init_ui(void* pointer_u0,
 			{
 				// fetch all data in one go
 			}
+#endif
 
 			bool innerlp = 0;
 			for(int k=gg; k<gg+chunk_per_node_d3; k+=BSIZE){

@@ -446,7 +446,7 @@ int main(int argc, char **argv){
 	for(int it = 1; it <= 1; it++){
 		/* the call to the conjugate gradient routine */
 		conj_grad(colidx, rowstr, x, z, a, p, q, r, rnorm, dist_table);
-		
+
 		for (int node_id = 0; node_id < nodes; ++node_id) {
 			#pragma oss task weakout(norm_temp1[node_id*SCPAD;SCPAD],	\
 						 norm_temp2[node_id*SCPAD;SCPAD])	\
@@ -461,7 +461,7 @@ int main(int argc, char **argv){
 					norm_temp2[node_id*SCPAD] = 0.0;
 				}
 		}
-		
+
 		/*
 		 * --------------------------------------------------------------------
 		 * zeta = shift + 1/(x.z)
@@ -470,7 +470,7 @@ int main(int argc, char **argv){
 		 * so, first: (z.z)
 		 * --------------------------------------------------------------------
 		 */
-		for (int node_id = 0; node_id < nodes; ++node_id) {			
+		for (int node_id = 0; node_id < nodes; ++node_id) {
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
@@ -482,8 +482,8 @@ int main(int argc, char **argv){
 					 node(node_id)
 			{
 #ifdef ENABLE_FETCH_TASKS
-				#pragma oss task in(x[gg;region_per_node_naa],		\
-						    z[gg;region_per_node_naa])		\
+				#pragma oss task in(x[gg;region_per_node_naa],	\
+						    z[gg;region_per_node_naa])	\
 						 node(nanos6_cluster_no_offload)
 				{
 					// fetch all data in one go
@@ -510,17 +510,23 @@ int main(int argc, char **argv){
 				}
 			}
 		}
-		
-		#pragma oss task in(norm_temp2[0;nodes*SCPAD])		\
-				 inout(norm_temp2[nodes*SCPAD;SCPAD])	\
+
+		#pragma oss task in(norm_temp1[0;nodes*SCPAD],		\
+				    norm_temp2[0;nodes*SCPAD])		\
+				 inout(norm_temp1[nodes*SCPAD;SCPAD],	\
+				       norm_temp2[nodes*SCPAD;SCPAD])	\
+				 out(*zeta)				\
 				 firstprivate(nodes, SCPAD)		\
 				 node(nanos6_cluster_no_offload)
 		{
+			norm_temp1[nodes*SCPAD] = 0.0;
 			norm_temp2[nodes*SCPAD] = 0.0;
 			for (int node_id = 0; node_id < nodes; ++node_id) {
+				norm_temp1[nodes*SCPAD] += norm_temp1[node_id*SCPAD];
 				norm_temp2[nodes*SCPAD] += norm_temp2[node_id*SCPAD];
 			}
 			norm_temp2[nodes*SCPAD] = 1.0 / sqrt(norm_temp2[nodes*SCPAD]);
+			*zeta = SHIFT + 1.0 / norm_temp1[nodes*SCPAD];
 		}
 
 		/* normalize z to obtain x */
@@ -528,7 +534,7 @@ int main(int argc, char **argv){
 			/* Calculate row region for each node and node_id */
 			node_chunk(node_id, gg, region_per_node_naa, NA, dist_table);
 
-			#pragma oss task weakin(z[gg;region_per_node_naa], 				\
+			#pragma oss task weakin(z[gg;region_per_node_naa],				\
 						norm_temp2[nodes*SCPAD;SCPAD])				\
 					 weakout(x[gg;region_per_node_naa])				\
 					 firstprivate(gg, region_per_node_naa, BSIZE, nodes, SCPAD)	\

@@ -696,7 +696,9 @@ int main(int argc, char **argv){
 		}
 
 		if(it==1){printf("\n   iteration           ||r||                 zeta\n");}
-		#pragma oss task in(*rnorm, *zeta) firstprivate(it)
+		#pragma oss task in(*rnorm, *zeta)	\
+				 firstprivate(it)	\
+				 node(nanos6_cluster_no_offload)
 		printf("    %5d       %20.14e%20.13e\n", it, *rnorm, *zeta);
 
 		/* normalize z to obtain x */

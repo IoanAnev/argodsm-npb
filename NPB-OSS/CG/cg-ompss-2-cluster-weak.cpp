@@ -808,13 +808,13 @@ int main(int argc, char **argv){
 	 * "local" array deallocations
 	 * ---------------------------------------------------------------------
 	 */
-	dfree<int>(colidx, NZ);
-	dfree<int>(rowstr, NA+1);
-	dfree<int>(iv, NA);
-	dfree<int>(arow, NA);
-	dfree<int>(acol, NAZ);
+	dfree<int>(colidx,  NZ);
+	dfree<int>(rowstr,  NA+1);
+	dfree<int>(iv,      NA);
+	dfree<int>(arow,    NA);
+	dfree<int>(acol,    NAZ);
 	dfree<double>(aelt, NAZ);
-	dfree<double>(a, NZ);
+	dfree<double>(a,    NZ);
 	
 	/*
 	 * ---------------------------------------------------------------------
@@ -832,22 +832,22 @@ int main(int argc, char **argv){
 	 * global scalar deallocations
 	 * ---------------------------------------------------------------------
 	 */
-	dfree<double>(norm_temp1, 1);
-	dfree<double>(norm_temp2, 1);
-	dfree<double>(zeta, 1);
-	dfree<double>(rnorm, 1);
+	dfree<double>(norm_temp1, (nodes+1)*SCALARS_PAD);
+	dfree<double>(norm_temp2, (nodes+1)*SCALARS_PAD);
+	dfree<double>(zeta,       1);
+	dfree<double>(rnorm,      1);
 
 	/*
 	 * --------------------------------------------------------------------
 	 * global scalar deallocations for the conj_grad() function
 	 * --------------------------------------------------------------------
 	 */
-	dfree<double>(d, 1);
-	dfree<double>(sum, 1);
-	dfree<double>(rho, 1);
-	dfree<double>(rho0, 1);
+	dfree<double>(d,     (nodes+1)*SCALARS_PAD);
+	dfree<double>(sum,   (nodes+1)*SCALARS_PAD);
+	dfree<double>(rho,   (nodes+1)*SCALARS_PAD);
+	dfree<double>(rho0,  1);
 	dfree<double>(alpha, 1);
-	dfree<double>(beta, 1);
+	dfree<double>(beta,  1);
 
 	return 0;
 }

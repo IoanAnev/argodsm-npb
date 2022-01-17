@@ -108,10 +108,12 @@
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static dcomplex sums[NITER_DEFAULT+1];
 static dcomplex u[MAXDIM];
-=static int dims[3];
+static double twiddle[NTOTAL];
+static int dims[3];
 #else
 static dcomplex (*sums)=(dcomplex*)malloc(sizeof(dcomplex)*(NITER_DEFAULT+1));
 static dcomplex (*u)=(dcomplex*)malloc(sizeof(dcomplex)*(MAXDIM));
+static double (*twiddle)=(double*)malloc(sizeof(double)*(NTOTAL));
 static int (*dims)=(int*)malloc(sizeof(int)*(3));
 #endif
 static int niter;
@@ -122,7 +124,6 @@ static boolean debug;
 static dcomplex (*u0);
 static dcomplex (*u1);
 static dcomplex (*gchk);
-static double (*twiddle);
 
 /* function prototypes */
 static void cffts1(int is,
@@ -219,7 +220,8 @@ int main(int argc, char **argv){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(12*1024*1024*1024UL);
+	argo::init(512*1024*1024UL,
+	           512*1024*1024UL);
 	/*
 	 * -------------------------------------------------------------------------
 	 * fetch workrank, number of nodes, and number of threads
@@ -247,7 +249,6 @@ int main(int argc, char **argv){
 #endif
 	u0=argo::conew_array<dcomplex>(NTOTAL);
 	u1=argo::conew_array<dcomplex>(NTOTAL);
-	twiddle=argo::conew_array<double>(NTOTAL);
 	
 	gchk=argo::conew_array<dcomplex>(numtasks);
 
@@ -398,7 +399,6 @@ int main(int argc, char **argv){
 	 */
 	argo::codelete_array(u0);
 	argo::codelete_array(u1);
-	argo::codelete_array(twiddle);
 	
 	argo::codelete_array(gchk);
 	/*
@@ -660,9 +660,6 @@ static void compute_indexmap(void* pointer_twiddle,
 	int i, j, k, kk, kk2, jj, kj2, ii;
 	double ap;
 
-	int beg, end;
-	distribute(beg, end, d3, 0, 0);
-
 	/*
 	 * ---------------------------------------------------------------------
 	 * basically we want to convert the fortran indices 
@@ -675,7 +672,7 @@ static void compute_indexmap(void* pointer_twiddle,
 	 */
 	ap = - 4.0 * ALPHA * PI * PI;
 	#pragma omp parallel for private(i,j,kk,kk2,jj,kj2,ii)
-	for(k=beg; k<end; k++){
+	for(k=0; k<d3; k++){
 		kk = ((k+NZ/2) % NZ) - NZ/2;
 		kk2 = kk*kk;
 		for(j=0; j<d2; j++){
@@ -928,18 +925,26 @@ static void init_ui(void* pointer_u0,
 	dcomplex (*u0)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u0;
 	dcomplex (*u1)[NY][NX] = (dcomplex(*)[NY][NX])pointer_u1;
 	double (*twiddle)[NY][NX] = (double(*)[NY][NX])pointer_twiddle;
+	
+	int i, j, k;
+	#pragma omp parallel for private(i,j,k)
+	for(k=0; k<d3; k++){
+		for(j=0; j<d2; j++){
+			for(i=0; i<d1; i++){
+				twiddle[k][j][i] = 0.0;
+			}
+		}
+	}
 
 	int beg, end;
 	distribute(beg, end, d3, 0, 0);
 
-	int i, j, k;
 	#pragma omp parallel for private(i,j,k)
 	for(k=beg; k<end; k++){
 		for(j=0; j<d2; j++){
 			for(i=0; i<d1; i++){
 				u0[k][j][i] = dcomplex_create(0.0, 0.0);
 				u1[k][j][i] = dcomplex_create(0.0, 0.0);
-				twiddle[k][j][i] = 0.0;
 			}
 		}
 	}

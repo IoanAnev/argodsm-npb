@@ -249,8 +249,7 @@ int main(int argc, char **argv){
 #endif
 	u0=argo::conew_array<dcomplex>(NTOTAL);
 	u1=argo::conew_array<dcomplex>(NTOTAL);
-	
-	gchk=argo::conew_array<dcomplex>(numtasks);
+	gchk=argo::conew_array<dcomplex>(numtasks*512);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -399,7 +398,6 @@ int main(int argc, char **argv){
 	 */
 	argo::codelete_array(u0);
 	argo::codelete_array(u1);
-	
 	argo::codelete_array(gchk);
 	/*
 	 * -------------------------------------------------------------------------
@@ -1273,12 +1271,12 @@ static void gchk_acc(dcomplex* addr,
 {
 	#pragma omp single
 	{
-	*(addr + workrank) = val;
-	argo::barrier();
+		*(addr + workrank*512) = val;
+		argo::barrier();
 
-	for (int i = 0; i < numtasks; ++i)
-		if (i != workrank)
-			val = dcomplex_add(val, *(addr + i));
-	}
+		for (int i = 0; i < numtasks; ++i)
+			if (i != workrank)
+				val = dcomplex_add(val, *(addr + i*512));
+		}
 }
 

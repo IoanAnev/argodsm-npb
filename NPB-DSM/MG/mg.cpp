@@ -137,8 +137,8 @@ int main(int argc, char *argv[]){
 	}
 #endif
 	u=argo::conew_array<double>(NR);
-	v=argo::conew_array<double>(NV);
 	r=argo::conew_array<double>(NR);
+	v=argo::conew_array<double>(NV);
 
 	gj1=argo::conew_array<int>(2*MM);
 	gj2=argo::conew_array<int>(2*MM);
@@ -1364,6 +1364,11 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	e3 = ie3 - is3 + 2;
 	x0 = X;
 	randlc(&x0, ai);
+	/**
+	 * @note Can use selective coherence
+	 *       here to let one process pro-
+	 *       ceed at a time to initialize
+	 */
 	if(workrank == 0){
 		for(i3 = 1; i3 < e3; i3++){
 			x1 = x0;
@@ -1507,6 +1512,12 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	}
 	argo::barrier();
 
+	/**
+	 * @note Can use argo::get_homenode()
+	 *       here to let only the process
+	 *       which is the homenode of z[]
+	 *       at that index assing -1 or 1
+	 */
 	if(workrank == 0){
 		for (i = MM-1; i >= m0; i--){
 			z[jg[0][i][3]][jg[0][i][2]][jg[0][i][1]] = -1.0;

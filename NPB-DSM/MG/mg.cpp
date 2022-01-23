@@ -107,7 +107,8 @@ int main(int argc, char *argv[]){
 	 * initialize argodsm
 	 * -------------------------------------------------------------------------
 	 */
-	argo::init(10*1024*1024*1024UL);
+	argo::init(512*1024*1024UL,
+	           512*1024*1024UL);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -1404,29 +1405,22 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 
 	distribute(beg, end, n3-1, 1, 0);
 
-	#pragma omp parallel for private(i1, i2, i3)
 	for(i3 = beg; i3 < end; i3++){
 		for(i2 = 1; i2 < n2-1; i2++){
 			for(i1 = 1; i1 < n1-1; i1++){
 				if(z[i3][i2][i1] > ten[1][0]){
-					#pragma omp critical
-					{
-						ten[1][0] = z[i3][i2][i1];
-						j1[1][0] = i1;
-						j2[1][0] = i2;
-						j3[1][0] = i3;
-						bubble(ten, j1, j2, j3, MM, 1);
-					}
+					ten[1][0] = z[i3][i2][i1];
+					j1[1][0] = i1;
+					j2[1][0] = i2;
+					j3[1][0] = i3;
+					bubble(ten, j1, j2, j3, MM, 1);
 				}
 				if(z[i3][i2][i1] < ten[0][0]){
-					#pragma omp critical
-					{
-						ten[0][0] = z[i3][i2][i1];
-						j1[0][0] = i1;
-						j2[0][0] = i2;
-						j3[0][0] = i3;
-						bubble(ten, j1, j2, j3, MM, 0);
-					}
+					ten[0][0] = z[i3][i2][i1];
+					j1[0][0] = i1;
+					j2[0][0] = i2;
+					j3[0][0] = i3;
+					bubble(ten, j1, j2, j3, MM, 0);
 				}
 			}
 		}
@@ -1514,11 +1508,9 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	argo::barrier();
 
 	if(workrank == 0){
-		#pragma omp parallel for private(i)
 		for (i = MM-1; i >= m0; i--){
 			z[jg[0][i][3]][jg[0][i][2]][jg[0][i][1]] = -1.0;
 		}
-		#pragma omp parallel for private(i)
 		for(i = MM-1; i >= m1; i--){
 			z[jg[1][i][3]][jg[1][i][2]][jg[1][i][1]] = +1.0;
 		}

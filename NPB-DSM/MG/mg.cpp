@@ -22,7 +22,6 @@
  */
 
 #include "argo.hpp"
-#include "cohort_lock.hpp"
 #include "omp.h"
 #include "../common/npb-CPP.hpp"
 #include "npbparams.hpp"
@@ -81,8 +80,6 @@ static double *r;
 static double *gs;
 static double *gten;
 
-static argo::globallock::cohort_lock *lock;
-
 /* function prototypes */
 static void bubble(void* pten, void* pj1, void* pj2, void* pj3, int m, int ind);
 static void comm3(void* pointer_u, int n1, int n2, int n3, int kk);
@@ -140,18 +137,25 @@ int main(int argc, char *argv[]){
 	r=argo::conew_array<double>(NR);
 	v=argo::conew_array<double>(NV);
 
-	gj1=argo::conew_array<int>(2*MM);
-	gj2=argo::conew_array<int>(2*MM);
-	gj3=argo::conew_array<int>(2*MM);
-	gten=argo::conew_array<double>(2*MM);
-
 	/*
 	 * -------------------------------------------------------------------------
 	 * move global arrays allocation here, since this is a collective operation
 	 * -------------------------------------------------------------------------
 	 */
-	gs=argo::conew_<double>(0.0);
-	lock=new argo::globallock::cohort_lock();
+	assert(1024 > 2*MM);
+	assert( 512 > 2*MM);
+
+	//gj1=argo::conew_array<int>(2*MM);
+	//gj2=argo::conew_array<int>(2*MM);
+	//gj3=argo::conew_array<int>(2*MM);
+	//gten=argo::conew_array<double>(2*MM);
+	
+	gj1=argo::conew_array<int>(numtasks*1024);
+	gj2=argo::conew_array<int>(numtasks*1024);
+	gj3=argo::conew_array<int>(numtasks*1024);
+	gten=argo::conew_array<double>(numtasks*512);
+
+	gs=argo::conew_array<double>(numtasks*512);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -513,21 +517,19 @@ int main(int argc, char *argv[]){
 	 * -------------------------------------------------------------------------
 	 */
 	argo::codelete_array(u);
-	argo::codelete_array(v);
 	argo::codelete_array(r);
-
-	argo::codelete_array(gj1);
-	argo::codelete_array(gj2);
-	argo::codelete_array(gj3);
-	argo::codelete_array(gten);
+	argo::codelete_array(v);
 
 	/*
 	 * -------------------------------------------------------------------------
 	 * deallocate data structures
 	 * -------------------------------------------------------------------------
 	 */
-	delete lock;
-	argo::codelete_(gs);
+	argo::codelete_array(gj1);
+	argo::codelete_array(gj2);
+	argo::codelete_array(gj3);
+	argo::codelete_array(gten);
+	argo::codelete_array(gs);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -930,20 +932,15 @@ static void norm2u3(void* pointer_r, int n1, int n2, int n3, double* rnm2, doubl
 		}
 	}
 
-	#pragma omp master
-	{
-		lock->lock();
-		*gs += s;
-		lock->unlock();
-	}
-	argo::barrier(nthreads);
-
+	/* commit and accumulate global values */
 	#pragma omp single
 	{
-		s = *gs;
-		if(workrank == 0){
-			*gs = 0.0;
-		}
+		*(gs + workrank*512) = s;
+		argo::barrier();
+
+		for (int i = 0; i < numtasks; ++i)
+			if (i != workrank)
+				s += *(gs + i*512);
 	}
 
 	*rnmu = rnmu_local;
@@ -1387,20 +1384,21 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	 * ---------------------------------------------------------------------
 	 */	
 	for(i = 0; i < MM; i++){
-		if(workrank == 0){
-			gten[1*MM + i] = 0.0;
-			gj1[1*MM + i] = 0;
-			gj2[1*MM + i] = 0;
-			gj3[1*MM + i] = 0;
-			gten[0*MM + i] = 1.0;
-			gj1[0*MM + i] = 0;
-			gj2[0*MM + i] = 0;
-			gj3[0*MM + i] = 0;
-		}
+		gten[workrank*512+1*MM + i] = 0.0;
+		gj1[workrank*1024+1*MM + i] = 0;
+		gj2[workrank*1024+1*MM + i] = 0;
+		gj3[workrank*1024+1*MM + i] = 0;
+		
+		gten[workrank*512+0*MM + i] = 1.0;
+		gj1[workrank+1024+0*MM + i] = 0;
+		gj2[workrank+1024+0*MM + i] = 0;
+		gj3[workrank+1024+0*MM + i] = 0;
+
 		ten[1][i] = 0.0;
 		j1[1][i] = 0;
 		j2[1][i] = 0;
 		j3[1][i] = 0;
+
 		ten[0][i] = 1.0;
 		j1[0][i] = 0;
 		j2[0][i] = 0;
@@ -1413,53 +1411,50 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	for(i3 = beg; i3 < end; i3++){
 		for(i2 = 1; i2 < n2-1; i2++){
 			for(i1 = 1; i1 < n1-1; i1++){
-				if(z[i3][i2][i1] > ten[1][0]){
-					ten[1][0] = z[i3][i2][i1];
-					j1[1][0] = i1;
-					j2[1][0] = i2;
-					j3[1][0] = i3;
-					bubble(ten, j1, j2, j3, MM, 1);
+				if(z[i3][i2][i1] > gten[workrank*512+1*MM + 0]){
+					gten[workrank*512+1*MM + 0] = z[i3][i2][i1];
+					gj1[workrank*1024+1*MM + 0] = i1;
+					gj2[workrank*1024+1*MM + 0] = i2;
+					gj3[workrank*1024+1*MM + 0] = i3;
+					bubble(&gten[workrank*512],
+					       &gj1[workrank*1024],
+					       &gj2[workrank*1024],
+					       &gj3[workrank*1024],
+					       MM, 1);
 				}
-				if(z[i3][i2][i1] < ten[0][0]){
-					ten[0][0] = z[i3][i2][i1];
-					j1[0][0] = i1;
-					j2[0][0] = i2;
-					j3[0][0] = i3;
-					bubble(ten, j1, j2, j3, MM, 0);
+				if(z[i3][i2][i1] < gten[workrank*512+0*MM + 0]){
+					gten[workrank*512+0*MM + 0] = z[i3][i2][i1];
+					gj1[workrank*1024+0*MM + 0] = i1;
+					gj2[workrank*1024+0*MM + 0] = i2;
+					gj3[workrank*1024+0*MM + 0] = i3;
+					bubble(&gten[workrank*512],
+					       &gj1[workrank*1024],
+					       &gj2[workrank*1024],
+					       &gj3[workrank*1024],
+					       MM, 0);
 				}
 			}
 		}
 	}
-
-	lock->lock();
-	for(i3 = 0; i3 < MM; i3++){
-		if(ten[1][i3] > gten[1*MM + 0]){
-			gten[1*MM + 0] = ten[1][i3];
-			gj1[1*MM + 0] = j1[1][i3];
-			gj2[1*MM + 0] = j2[1][i3];
-			gj3[1*MM + 0] = j3[1][i3];
-			bubble(gten, gj1, gj2, gj3, MM, 1);
-		}
-		if(ten[0][i3] < gten[0*MM + 0]){
-			gten[0*MM + 0] = ten[0][i3];
-			gj1[0*MM + 0] = j1[0][i3];
-			gj2[0*MM + 0] = j2[0][i3];
-			gj3[0*MM + 0] = j3[0][i3];
-			bubble(gten, gj1, gj2, gj3, MM, 0);
-		}
-	}
-	lock->unlock();
 	argo::barrier();
 
 	for(i3 = 0; i3 < MM; i3++){
-		ten[1][i3] = gten[1*MM + i3];
-		j1[1][i3] = gj1[1*MM + i3];
-		j2[1][i3] = gj2[1*MM + i3];
-		j3[1][i3] = gj3[1*MM + i3];
-		ten[0][i3] = gten[0*MM + i3];
-		j1[0][i3] = gj1[0*MM + i3];
-		j2[0][i3] = gj2[0*MM + i3];
-		j3[0][i3] = gj3[0*MM + i3];
+		for (int i = 0; i < numtasks; ++i){
+			if(gten[i*512+1*MM + i3] > ten[1][0]){
+				ten[1][0] = gten[i*512+1*MM + i3];
+				j1[1][0]  = gj1[i*1024+1*MM + i3];
+				j2[1][0]  = gj2[i*1024+1*MM + i3];
+				j3[1][0]  = gj3[i*1024+1*MM + i3];
+				bubble(ten, j1, j2, j3, MM, 1);
+			}
+			if(gten[i*512+0*MM + i3] < ten[0][0]){
+				ten[0][0] = gten[i*512+0*MM + i3];
+				j1[0][0]  = gj1[i*1024+0*MM + i3];
+				j2[0][0]  = gj2[i*1024+0*MM + i3];
+				j3[0][0]  = gj3[i*1024+0*MM + i3];
+				bubble(ten, j1, j2, j3, MM, 0);
+			}
+		}
 	}
 
 	/*
@@ -1512,19 +1507,13 @@ static void zran3(void* pointer_z, int n1, int n2, int n3, int nx, int ny, int k
 	}
 	argo::barrier();
 
-	/**
-	 * @note Can use argo::get_homenode()
-	 *       here to let only the process
-	 *       which is the homenode of z[]
-	 *       at that index assing -1 or 1
-	 */
-	if(workrank == 0){
-		for (i = MM-1; i >= m0; i--){
+	for (i = MM-1; i >= m0; i--){
+		if (argo::get_homenode(&z[jg[0][i][3]][jg[0][i][2]][jg[0][i][1]]) == workrank)
 			z[jg[0][i][3]][jg[0][i][2]][jg[0][i][1]] = -1.0;
-		}
-		for(i = MM-1; i >= m1; i--){
+	}
+	for(i = MM-1; i >= m1; i--){
+		if (argo::get_homenode(&z[jg[1][i][3]][jg[1][i][2]][jg[1][i][1]]) == workrank)
 			z[jg[1][i][3]][jg[1][i][2]][jg[1][i][1]] = +1.0;
-		}
 	}
 	argo::barrier();
 

@@ -256,7 +256,7 @@ int main(int argc, char **argv){
 	 * continue with the local allocations
 	 * -------------------------------------------------------------------------
 	 */
-	int i;	
+	int i;
 	int iter;
 	double total_time, mflops;
 	boolean verified;
@@ -1260,7 +1260,7 @@ static void distribute(int& beg,
 		int& end,
 		const int& loop_size,
 		const int& beg_offset,
-    		const int& less_equal){
+		const int& less_equal){
 	int chunk = loop_size / numtasks;
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
@@ -1277,6 +1277,6 @@ static void gchk_acc(dcomplex* addr,
 		for (int i = 0; i < numtasks; ++i)
 			if (i != workrank)
 				val = dcomplex_add(val, *(addr + i*512));
-		}
+	}
 }
 

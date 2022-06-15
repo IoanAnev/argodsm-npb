@@ -90,11 +90,6 @@ static int workrank;
 static int numtasks;
 static int nthreads;
 
-#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
-#define unaligned_chunk ((NA+2) / (numtasks))
-#define aligned_chunk ALIGN_UP((unaligned_chunk), 512)
-#define pad ((aligned_chunk) - (unaligned_chunk))
-
 /* function prototypes */
 static void conj_grad(int colidx[],
 		int rowstr[],
@@ -1089,7 +1084,7 @@ static void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal){
-	int chunk = aligned_chunk;
+	int chunk = loop_size / numtasks;
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }

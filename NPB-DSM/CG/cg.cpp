@@ -44,12 +44,12 @@
  * include file, which is written by the sys/setparams.c program.
  * ---------------------------------------------------------------------
  */
-#define NZ 		(NA*(NONZER+1)*(NONZER+1))
-#define NAZ 		(NA*(NONZER+1))
-#define T_INIT 		0
-#define T_BENCH 	1
-#define T_CONJ_GRAD 	2
-#define T_LAST 		3
+#define NZ          (NA*(NONZER+1)*(NONZER+1))
+#define NAZ         (NA*(NONZER+1))
+#define T_INIT      0
+#define T_BENCH     1
+#define T_CONJ_GRAD 2
+#define T_LAST      3
 
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
@@ -79,11 +79,19 @@ static double amult;
 static double tran;
 static boolean timeron;
 
-static double (*x);
-static double (*p);
-static double (*q);
-static double (*r);
-static double (*z);
+// pad in bytes
+#define PAD 4096
+
+typedef struct array_type {
+    double val;
+    char pad[PAD-sizeof(double)];
+} array_type;
+
+static array_type (*x);
+static array_type (*p);
+static array_type (*q);
+static array_type (*r);
+static array_type (*z);
 static double (*gnorms);
 
 static int workrank;
@@ -93,12 +101,12 @@ static int nthreads;
 /* function prototypes */
 static void conj_grad(int colidx[],
 		int rowstr[],
-		double x[],
-		double z[],
+		array_type x[],
+		array_type z[],
 		double a[],
-		double p[],
-		double q[],
-		double r[],
+		array_type p[],
+		array_type q[],
+		array_type r[],
 		double* rnorm);
 static int icnvrt(double x,
 		int ipwr2);
@@ -180,12 +188,12 @@ int main(int argc, char **argv){
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
 
-	p = argo::conew_array<double>(NA+2);
-	q = argo::conew_array<double>(NA+2);
-	r = argo::conew_array<double>(NA+2);
-	x = argo::conew_array<double>(NA+2);
-	z = argo::conew_array<double>(NA+2);
-	gnorms = argo::conew_array<double>(numtasks*512);
+	p      = argo::conew_array<array_type>(NA+2);
+	q      = argo::conew_array<array_type>(NA+2);
+	r      = argo::conew_array<array_type>(NA+2);
+	x      = argo::conew_array<array_type>(NA+2);
+	z      = argo::conew_array<array_type>(NA+2);
+	gnorms = argo::conew_array<double    >(numtasks*512);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -329,8 +337,8 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 += x[j]*z[j];
-				norm_temp2 += z[j]*z[j];
+				norm_temp1 += x[j].val*z[j].val;
+				norm_temp2 += z[j].val*z[j].val;
 			}
 			gnorms_acc({{&gnorms[0], norm_temp1},
 			            {&gnorms[1], norm_temp2}});
@@ -344,14 +352,14 @@ int main(int argc, char **argv){
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
-				x[j] = norm_temp2*z[j];
+				x[j].val = norm_temp2*z[j].val;
 			}
 		} /* end of do one iteration untimed */
 
 		/* set starting vector to (1, 1, .... 1) */	
 		#pragma omp for
 		for(i = beg_naa1; i < end_naa1; i++){
-			x[i] = 1.0;
+			x[i].val = 1.0;
 		}
 
 		#pragma omp single
@@ -397,8 +405,8 @@ int main(int argc, char **argv){
 			 */
 			#pragma omp for reduction(+:norm_temp1,norm_temp2)
 			for(j = beg_col; j < end_col; j++){
-				norm_temp1 += x[j]*z[j];
-				norm_temp2 += z[j]*z[j];
+				norm_temp1 += x[j].val*z[j].val;
+				norm_temp2 += z[j].val*z[j].val;
 			}
 			gnorms_acc({{&gnorms[0], norm_temp1},
 			            {&gnorms[1], norm_temp2}});
@@ -420,7 +428,7 @@ int main(int argc, char **argv){
 			/* normalize z to obtain x */
 			#pragma omp for 
 			for(j = beg_col; j < end_col; j++){
-				x[j] = norm_temp2*z[j];
+				x[j].val = norm_temp2*z[j].val;
 			}
 		} /* end of main iter inv pow meth */
 	} /* end parallel */
@@ -541,12 +549,12 @@ if (workrank == 0) {
  */
 static void conj_grad(int colidx[],
 		int rowstr[],
-		double x[],
-		double z[],
+		array_type x[],
+		array_type z[],
 		double a[],
-		double p[],
-		double q[],
-		double r[],
+		array_type p[],
+		array_type q[],
+		array_type r[],
 		double* rnorm){
 	int j, k;
 	int cgit, cgitmax;
@@ -574,10 +582,10 @@ static void conj_grad(int colidx[],
 	/* initialize the CG algorithm */
 	#pragma omp for
 	for(j = beg_naa1; j < end_naa1; j++){
-		q[j] = 0.0;
-		z[j] = 0.0;
-		r[j] = x[j];
-		p[j] = r[j];
+		q[j].val = 0.0;
+		z[j].val = 0.0;
+		r[j].val = x[j].val;
+		p[j].val = r[j].val;
 	}
 
 	/*
@@ -588,7 +596,7 @@ static void conj_grad(int colidx[],
 	 */
 	#pragma omp for reduction(+:rho)
 	for(j = beg_col; j < end_col; j++){
-		rho += r[j]*r[j];
+		rho += r[j].val*r[j].val;
 	}
 	gnorms_acc({{&gnorms[0], rho}});
 
@@ -624,9 +632,9 @@ static void conj_grad(int colidx[],
 		for(j = beg_row; j < end_row; j++){
 			suml = 0.0;
 			for(k = rowstr[j]; k < rowstr[j+1]; k++){
-				suml += a[k]*p[colidx[k]];
+				suml += a[k]*p[colidx[k]].val;
 			}
-			q[j] = suml;
+			q[j].val = suml;
 		}
 
 		/*
@@ -637,7 +645,7 @@ static void conj_grad(int colidx[],
 
 		#pragma omp for reduction(+:d)
 		for (j = beg_col; j < end_col; j++) {
-			d += p[j]*q[j];
+			d += p[j].val*q[j].val;
 		}
 		gnorms_acc({{&gnorms[1], d}});
 
@@ -656,8 +664,8 @@ static void conj_grad(int colidx[],
 		 */
 		#pragma omp for reduction(+:rho)
 		for(j = beg_col; j < end_col; j++){
-			z[j] += alpha*p[j];
-			r[j] -= alpha*q[j];
+			z[j].val += alpha*p[j].val;
+			r[j].val -= alpha*q[j].val;
 			
 			/*
 			 * ---------------------------------------------------------------------
@@ -665,7 +673,7 @@ static void conj_grad(int colidx[],
 			 * now, obtain the norm of r: first, sum squares of r elements locally...
 			 * ---------------------------------------------------------------------
 			 */
-			rho += r[j]*r[j];
+			rho += r[j].val*r[j].val;
 		}
 		gnorms_acc({{&gnorms[0], rho}});
 
@@ -683,7 +691,7 @@ static void conj_grad(int colidx[],
 		 */
 		#pragma omp for
 		for(j = beg_col; j < end_col; j++){
-			p[j] = r[j] + beta*p[j];
+			p[j].val = r[j].val + beta*p[j].val;
 		}
 		argo::barrier(nthreads);
 	} /* end of do cgit=1, cgitmax */
@@ -699,9 +707,9 @@ static void conj_grad(int colidx[],
 	for(j = beg_row; j < end_row; j++){
 		suml = 0.0;
 		for(k = rowstr[j]; k < rowstr[j+1]; k++){
-			suml += a[k]*z[colidx[k]];
+			suml += a[k]*z[colidx[k]].val;
 		}
-		r[j] = suml;
+		r[j].val = suml;
 	}
 
 	/*
@@ -711,7 +719,7 @@ static void conj_grad(int colidx[],
 	 */
 	#pragma omp for reduction(+:sum)
 	for(j = beg_col; j < end_col; j++){
-		suml = x[j]-r[j];
+		suml = x[j].val-r[j].val;
 		sum += suml*suml;
 	}
 	gnorms_acc({{&gnorms[1], sum}});
@@ -1103,4 +1111,3 @@ static void gnorms_acc(std::vector<std::pair<double*, double&>> pv)
 					iv.second += *(iv.first + i*512);
 	}
 }
-

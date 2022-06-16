@@ -51,8 +51,6 @@
 #define T_CONJ_GRAD 	2
 #define T_LAST 		3
 
-#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
-
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static int colidx[NZ];
@@ -91,6 +89,9 @@ static double (*gnorms);
 static int workrank;
 static int numtasks;
 static int nthreads;
+
+#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
+#define aligned_NA ALIGN_UP(NA, 512*numtasks)
 
 /* function prototypes */
 static void conj_grad(int colidx[],
@@ -182,12 +183,12 @@ int main(int argc, char **argv){
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
 
-	p = argo::conew_array<double>(ALIGN_UP(NA, 512));
-	q = argo::conew_array<double>(ALIGN_UP(NA, 512));
-	r = argo::conew_array<double>(ALIGN_UP(NA, 512));
-	x = argo::conew_array<double>(ALIGN_UP(NA, 512));
-	z = argo::conew_array<double>(ALIGN_UP(NA, 512));
-	gnorms = argo::conew_array<double>(numtasks*512);
+	p = argo::conew_array<double>(aligned_NA);
+	q = argo::conew_array<double>(aligned_NA);
+	r = argo::conew_array<double>(aligned_NA);
+	x = argo::conew_array<double>(aligned_NA);
+	z = argo::conew_array<double>(aligned_NA);
+	gnorms = argo::conew_array<double>(512*numtasks);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -1086,7 +1087,7 @@ static void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal){
-	int chunk = loop_size / numtasks;
+	int chunk = aligned_NA / numtasks;
 	beg = workrank * chunk + ((workrank == 0) ? beg_offset : less_equal);
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }

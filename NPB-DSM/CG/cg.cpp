@@ -51,6 +51,8 @@
 #define T_CONJ_GRAD 	2
 #define T_LAST 		3
 
+#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
+
 /* global variables */
 #if defined(DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION)
 static int colidx[NZ];
@@ -180,11 +182,11 @@ int main(int argc, char **argv){
 	printf(" DO_NOT_ALLOCATE_ARRAYS_WITH_DYNAMIC_MEMORY_AND_AS_SINGLE_DIMENSION mode on\n");
 #endif
 
-	p = argo::conew_array<double>(NA+2);
-	q = argo::conew_array<double>(NA+2);
-	r = argo::conew_array<double>(NA+2);
-	x = argo::conew_array<double>(NA+2);
-	z = argo::conew_array<double>(NA+2);
+	p = argo::conew_array<double>(ALIGN_UP(NA, 512));
+	q = argo::conew_array<double>(ALIGN_UP(NA, 512));
+	r = argo::conew_array<double>(ALIGN_UP(NA, 512));
+	x = argo::conew_array<double>(ALIGN_UP(NA, 512));
+	z = argo::conew_array<double>(ALIGN_UP(NA, 512));
 	gnorms = argo::conew_array<double>(numtasks*512);
 
 	/*

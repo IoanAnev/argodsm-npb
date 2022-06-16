@@ -84,7 +84,7 @@ static double (*p);
 static double (*q);
 static double (*r);
 static double (*z);
-static double (*gnorms);
+static double (*g);
 
 static int workrank;
 static int numtasks;
@@ -148,7 +148,7 @@ static void distribute(int& beg,
 		const int& loop_size,
 		const int& beg_offset,
 		const int& less_equal);
-static void gnorms_acc(std::vector<std::pair<double*, double&>> pv);
+static void g_acc(std::vector<std::pair<double*, double&>> pv);
 
 /* cg */
 int main(int argc, char **argv){
@@ -188,7 +188,7 @@ int main(int argc, char **argv){
 	r = argo::conew_array<double>(aligned_NA);
 	x = argo::conew_array<double>(aligned_NA);
 	z = argo::conew_array<double>(aligned_NA);
-	gnorms = argo::conew_array<double>(512*numtasks);
+	g = argo::conew_array<double>(aligned_NA);
 
 	/*
 	 * -------------------------------------------------------------------------
@@ -335,8 +335,8 @@ int main(int argc, char **argv){
 				norm_temp1 += x[j]*z[j];
 				norm_temp2 += z[j]*z[j];
 			}
-			gnorms_acc({{&gnorms[0], norm_temp1},
-			            {&gnorms[1], norm_temp2}});
+			g_acc({{&g[0], norm_temp1},
+			       {&g[1], norm_temp2}});
 
 			#pragma omp single
 			{
@@ -403,8 +403,8 @@ int main(int argc, char **argv){
 				norm_temp1 += x[j]*z[j];
 				norm_temp2 += z[j]*z[j];
 			}
-			gnorms_acc({{&gnorms[0], norm_temp1},
-			            {&gnorms[1], norm_temp2}});
+			g_acc({{&g[0], norm_temp1},
+			       {&g[1], norm_temp2}});
 
 			#pragma omp single
 			{
@@ -524,8 +524,7 @@ if (workrank == 0) {
 	argo::codelete_array(r);
 	argo::codelete_array(x);
 	argo::codelete_array(z);
-
-	argo::codelete_array(gnorms);
+	argo::codelete_array(g);
 	/*
 	 * -------------------------------------------------------------------------
 	 * finalize argodsm
@@ -593,7 +592,7 @@ static void conj_grad(int colidx[],
 	for(j = beg_col; j < end_col; j++){
 		rho += r[j]*r[j];
 	}
-	gnorms_acc({{&gnorms[0], rho}});
+	g_acc({{&g[0], rho}});
 
 	/* the conj grad iteration loop */
 	for(cgit = 1; cgit <= cgitmax; cgit++){
@@ -642,7 +641,7 @@ static void conj_grad(int colidx[],
 		for (j = beg_col; j < end_col; j++) {
 			d += p[j]*q[j];
 		}
-		gnorms_acc({{&gnorms[1], d}});
+		g_acc({{&g[1], d}});
 
 		/*
 		 * --------------------------------------------------------------------
@@ -670,7 +669,7 @@ static void conj_grad(int colidx[],
 			 */
 			rho += r[j]*r[j];
 		}
-		gnorms_acc({{&gnorms[0], rho}});
+		g_acc({{&g[0], rho}});
 
 		/*
 		 * ---------------------------------------------------------------------
@@ -717,7 +716,7 @@ static void conj_grad(int colidx[],
 		suml = x[j]-r[j];
 		sum += suml*suml;
 	}
-	gnorms_acc({{&gnorms[1], sum}});
+	g_acc({{&g[1], sum}});
 
 	#pragma omp single
 	{
@@ -1092,18 +1091,19 @@ static void distribute(int& beg,
 	end = (workrank != numtasks - 1) ? workrank * chunk + chunk : loop_size;
 }
 
-static void gnorms_acc(std::vector<std::pair<double*, double&>> pv)
+static void g_acc(std::vector<std::pair<double*, double&>> pv)
 {
+	int leap = aligned_NA / numtasks;
+
 	#pragma omp single
 	{
 		for (const auto iv : pv)
-			*(iv.first + workrank*512) = iv.second;
+			*(iv.first + workrank*leap) = iv.second;
 		argo::barrier();
 
 		for (const auto iv : pv)
 			for (int i = 0; i < numtasks; ++i)
 				if (i != workrank)
-					iv.second += *(iv.first + i*512);
+					iv.second += *(iv.first + i*leap);
 	}
 }
-
